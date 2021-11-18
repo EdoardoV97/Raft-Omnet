@@ -1,2 +1,5 @@
 /.vscode
-/src/out
+/raft/out
+/raft/.qtenvrc
+/raft/Makefile
+/raft/raft
