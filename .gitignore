@@ -3,3 +3,5 @@
 /raft/.qtenvrc
 /raft/Makefile
 /raft/raft
+/raft/RPCPacket_m.cc
+/raft/RPCPacket_m.h
