@@ -1,12 +1,8 @@
-//
-// This file is part of an OMNeT++/OMNEST simulation example.
-//
-// Copyright (C) 1992-2015 Andras Varga
-//
-// This file is distributed WITHOUT ANY WARRANTY. See the file
-// `license' for details on this and other legal matters.
-//
+cplusplus {{
+#include "data_types.h"
+}}
 
+struct log_entry;
 
 enum RPCPacketType
 {
@@ -17,22 +13,42 @@ enum RPCPacketType
 
 packet RPCPacket
 {
-    //TODO Insert fields
     int srcAddress;
     int destAddress;
     bool isBroadcast;
 };
 
+
 packet RPCAppendEntriesPacket extends RPCPacket
 {
-    //TODO Insert fields
-    string payload;
+    int term;                           // leader's term
+    int leaderId;                       // leader identifier so follower can redirect clients --> index of leader gate port in the Switch
+    int prevLogIndex;                   // index of log entry immediately preceding new ones          
+    int prevLogTerm;                    // term of prevLogIndex entry
+    log_entry entries;                  // log entries to store (empty for heartbeat);
+    int leaderCommit;                   // leader’s commitIndex
+};
+
+
+packet RPCAppendEntriesResponsePacket extends RPCPacket
+{
+    int term;                           // currentTerm, for leader to update itself
+    bool success;                       // true if follower contained entry matching prevLogIndex and prevLogTerm
 };
 
 packet RPCRequestVotePacket extends RPCPacket
 {
-    //TODO Insert fields
-    string payload;
+    int term;                           // candidate's term
+    int candidateId;                    // candidate identifier requesting vote --> index of candidate gate port in the Switch
+    int lastLogIndex;                   // index of candidate’s last log entry
+    int lastLogTerm;                    // term of candidate’s last log entry
+};
+
+packet RPCRequestVoteResponsePacket extends RPCPacket
+{
+    int term;                           // currentTerm, for candidate to update itself
+    bool voteGranted;                   // true means candidate received vote
+
 };
 
 packet RPCInstallSnapshotPacket extends RPCPacket
@@ -40,4 +56,3 @@ packet RPCInstallSnapshotPacket extends RPCPacket
     //TODO Insert fields
     string payload;
 };
-

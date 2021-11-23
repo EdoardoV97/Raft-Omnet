@@ -1,6 +1,8 @@
 #include "RPCPacket_m.h"
+#include <vector>
 
 using namespace omnetpp;
+using std::vector;
 
 /**
  * The basic server of the cluster; see NED file for more info
@@ -12,11 +14,32 @@ class Server : public cSimpleModule
   private:
     bool isLeader = false;
     cMessage *sendHearthbeat;
-    int myAddress;
-    int receiverAddress;
+    int myAddress;   // This is the server ID
+    int receiverAddress; // This is receiver server ID
+
+    // Pointers to handle RPC mexs
     RPCAppendEntriesPacket *appendEntriesRPC = nullptr;
+    RPCAppendEntriesResponsePacket *appendEntriesResponseRPC = nullptr;
     RPCRequestVotePacket *requestVoteRPC = nullptr;
+    RPCRequestVoteResponsePacket *requestVoteResponseRPC = nullptr;
     RPCInstallSnapshotPacket *installSnapshotRPC = nullptr;
+
+    // State Machine of the server
+    int x = 0;
+    vector<int> configuration;
+
+    // Persistent state --> Updated on stable storage before responding to RPCs
+    int currentTerm = 0;
+    int votedFor = -1;
+    vector<log_entry> log;
+
+    // Volatile state --> Reinitialize after crash
+    int commitIndex = 0;
+    int lastApplied = 0;
+
+    // Volatile state on leaders --> Reinitialized after election
+    vector<int> nextIndex;
+    vector<int> matchIndex;
 
   protected:
     virtual void initialize() override;
@@ -32,19 +55,19 @@ Server::~Server()
   cancelAndDelete(sendHearthbeat);
 }
 
+
 void Server::initialize()
 {
+  //matchIndex.assign(par("numServer"), 0);
   sendHearthbeat = new cMessage("send-hearthbeat");
 
-  myAddress = gate("port$o")->getNextGate()->getIndex(); // Return index of the server gate port in the Switch
-  //receiverAddress = gate("port$o")->getNextGate()->size()-2;
+  myAddress = gate("port$o")->getNextGate()->getIndex(); // Return index of this server gate port in the Switch
 
-  if (par("isLeader").boolValue() == true) { 
-    scheduleAt(simTime(), sendHearthbeat);
-    isLeader = true;
-  }
+  //if (par("isLeader").boolValue() == true) { 
+  //  scheduleAt(simTime(), sendHearthbeat);
+  //  isLeader = true;
+  //}
 }
-
 
 void Server::handleMessage(cMessage *msg)
 {
@@ -54,9 +77,7 @@ void Server::handleMessage(cMessage *msg)
     EV << "Sending hearthbeat to followers\n";
     appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
     appendEntriesRPC->setSrcAddress(myAddress);
-    //appendEntriesRPC->setDestAddress(-1);
     appendEntriesRPC->setIsBroadcast(true);
-    appendEntriesRPC->setPayload("hearthbeat");
     send(appendEntriesRPC, "port$o");
 
     scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
@@ -70,3 +91,4 @@ void Server::handleMessage(cMessage *msg)
     }
 }
 
+// Fare un metodo per checkare server facenti parte della configurazione corrente(= connessi allo switch)
