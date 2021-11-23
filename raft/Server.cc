@@ -1,5 +1,5 @@
 #include "RPCPacket_m.h"
-#include <vector>
+//#include <vector>
 
 using namespace omnetpp;
 using std::vector;
@@ -63,10 +63,10 @@ void Server::initialize()
 
   myAddress = gate("port$o")->getNextGate()->getIndex(); // Return index of this server gate port in the Switch
 
-  //if (par("isLeader").boolValue() == true) { 
-  //  scheduleAt(simTime(), sendHearthbeat);
-  //  isLeader = true;
-  //}
+  if (par("isLeader").boolValue() == true) { 
+    scheduleAt(simTime(), sendHearthbeat);
+    isLeader = true;
+  }
 }
 
 void Server::handleMessage(cMessage *msg)

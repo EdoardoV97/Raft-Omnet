@@ -1,10 +1,14 @@
+#include <vector>
+
+using std::vector;
+
 struct log_entry
 {
     char *var; // only 1 var
     int value;
     int term;
     int logIndex;
-    //TODO Aggiungere vector di ID per la configurazione
+    vector<int> configuration;
 };
 
 //enum serverState
