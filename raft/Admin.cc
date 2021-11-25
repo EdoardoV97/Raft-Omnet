@@ -46,6 +46,7 @@ Admin::~Admin()
   cancelAndDelete(changeConfig);
 }
 
+
 void Admin::createNewServer(int index)
 {
     cModuleType *moduleType = cModuleType::get("Server");
@@ -68,22 +69,27 @@ void Admin::createNewServer(int index)
     module->callInitialize();
 }
 
+
 void Admin::deleteServer()
 {
+  int serverID;
   for (int i = 2; i < Switch->gateSize("port$o"); i++){
-        if (Switch->gate("port$o", i)->getId() /*TODO is in toPurge*/ )
-        {
+      serverID = Switch->gate("port$o", i)->getId();
+      for (int k = 0; k < toPurge.size() ; k++){
+        if (serverID == toPurge[k]){
           // Get the Server to purge and disconnect port from the switch
           serverToPurge = Switch->gate("port$o", i)->getNextGate()->getOwnerModule();
           serverToPurge->gate("port$o")->disconnect();
           Switch->gate("port$o", i)->disconnect();
-          
+            
           // Delete the module
           serverToPurge->callFinish();
           serverToPurge->deleteModule();
         }
-    }
+      }
+  }
 }
+
 
 void Admin::updateConfiguration()
 {
@@ -98,6 +104,7 @@ void Admin::updateConfiguration()
         }
     }
 }
+
 
 void Admin::initialize()
 {
@@ -117,6 +124,7 @@ void Admin::initialize()
     updateConfiguration();
     scheduleAt(simTime() + par("changeConfigTime"), changeConfig);
 }
+
 
 void Admin::handleMessage(cMessage *msg)
 {
@@ -148,14 +156,15 @@ void Admin::handleMessage(cMessage *msg)
             numberOfNewServers = par("numberOfNewServers");
 
             // 2) Now new servers has been added, so we can purge the ones we want to remove from config
+            int oldConfigSize = configuration.size();
             for(int i = 0; i < numberOfServersToRemove; i++){
               // Update the config again with server removed, being carefull to not delete new servers just added
               bubble("Removing old servers from config!");
-              int position = configuration.size() - 1 - numberOfNewServers - i;
+              int position = oldConfigSize - 1 - numberOfNewServers - i;
               int purgedAddress = configuration[position];
               toPurge.push_back(purgedAddress);
               EV << "Added ID: " << purgedAddress << " to toPurge Vector" << endl;
-              //configuration.erase(configuration.begin() + configuration.size() - 1 - numberOfNewServers);
+              configuration.erase(configuration.begin() + configuration.size() - 1 - numberOfNewServers);
             }
             // 3) Now we can inform the cluster of the change
             //configChangedRPC = new RPCconfigChangedPacket("RPC_CONFIG_CHANGED", RPC_CONFIG_CHANGED);
@@ -168,7 +177,10 @@ void Admin::handleMessage(cMessage *msg)
     // The leader has committed the new configuration, so old servers can be shutted down
     RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
     if (pk->getKind() == RPC_NEW_CONFIG_COMMITTED){
-      //deleteServer();
+      deleteServer();
+      bubble("Shutting down old servers");
+      // Reset the toPurge vector, since servers have been deleted
+      toPurge.clear();
       delete pk;
     }
 }

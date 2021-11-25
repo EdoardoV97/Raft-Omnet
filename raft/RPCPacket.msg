@@ -67,6 +67,4 @@ packet RPCconfigChangedPacket extends RPCPacket
 };
 
 packet RPCnewConfigurationCommitted extends RPCPacket
-{
-    string payload;
-};
+{};

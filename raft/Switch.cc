@@ -54,9 +54,10 @@ void Switch::activity()
         // Send to specific address
         else{
             destAddress = pk->getDestAddress();
+            const char* destName = gate(destAddress)->getNextGate()->getOwnerModule()->getFullName();
             // TODO aggiungere nome del ricevente del messaggio al posto di destAddress
-            EV << "Relaying msg received to addr=" << destAddress << "\n";
-            send(msg, "port$o", destAddress);
+            EV << "Relaying msg received to " << destName << "  (addr = " << destAddress << ")\n";
+            send(msg, destAddress);
         }
     }
 }
