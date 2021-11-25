@@ -9,6 +9,10 @@ enum RPCPacketType
     RPC_APPEND_ENTRIES = 0;
     RPC_REQUEST_VOTE = 1;
     RPC_INSTALL_SNAPSHOT = 2;
+    RPC_APPEND_ENTRIES_RESPONSE = 3;
+    RPC_REQUEST_VOTE_RESPONSE = 4;
+    RPC_CLIENT_COMMAND = 5;
+    RPC_CLIENT_COMMAND_RESPONSE = 6;
 };
 
 packet RPCPacket
@@ -18,6 +22,14 @@ packet RPCPacket
     bool isBroadcast;
 };
 
+packet RPCClientCommandPacket extends RPCPacket{
+    char var;
+    int value;
+}
+
+packet RPCClientCommandResponsePacket extends RPCPacket{
+    
+}
 
 packet RPCAppendEntriesPacket extends RPCPacket
 {
