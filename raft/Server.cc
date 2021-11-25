@@ -56,15 +56,15 @@ class Server : public cSimpleModule
   protected:
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;
-    virtual void appendNewEntry(log_entry newEntry);
-    virtual int getIndex(vector<int> v, int K);
-    virtual void appendNewEntryTo(log_entry newEntry, int destAddress, int index);
-    virtual bool majority(int N);
-    virtual void applyCommand(log_entry entry,  RPCPacket *pk);
-    virtual void becomeLeader();
-    virtual void becomeCandidate();
-    virtual void becomeFollower(RPCPacket *pk);
-    virtual void updateTerm(RPCPacket *pk);
+    void appendNewEntry(log_entry newEntry);
+    int getIndex(vector<int> v, int K);
+    void appendNewEntryTo(log_entry newEntry, int destAddress, int index);
+    bool majority(int N);
+    void applyCommand(log_entry entry,  RPCPacket *pk);
+    void becomeLeader();
+    void becomeCandidate();
+    void becomeFollower(RPCPacket *pk);
+    void updateTerm(RPCPacket *pk);
 };
 
 Define_Module(Server);
@@ -74,23 +74,8 @@ Define_Module(Server);
 Server::~Server()
 {
   cancelAndDelete(sendHearthbeat);
-  cancelAndDelete(temp);
+  //TODO: eliminate others
 }
-
-void Server::updateConfiguration()
-{
-    cModule *Switch = gate("port$i")->getPreviousGate()->getOwnerModule();
-    int moduleAddress;
-    for (int i = 2; i < Switch->gateSize("port$o"); i++){
-        if (Switch->gate("port$o", i)->isConnected())
-        {
-          moduleAddress = Switch->gate("port$o", i)->getId();
-          //EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
-          configuration.push_back(moduleAddress);
-        }
-    }
-}
-
 
 void Server::initialize()
 {
@@ -100,8 +85,7 @@ void Server::initialize()
   myAddress = gate("port$o")->getNextGate()->getIndex(); // Return index of this server gate port in the Switch
   
   // TODO: Initialize the client address
-  // TODO: Initialize configuration
-
+  updateConfiguration();
   //Pushing the initial configuration in the log
   log_entry firstEntry;
   firstEntry.var = 'x';
@@ -507,4 +491,17 @@ void Server::becomeFollower(RPCPacket *pk){
   nextIndex.clear();
   matchIndex.clear();
   scheduleAt(simTime() +  uniform(par("lowElectionTimeout"), par("highElectionTimeout")) + , electionTimeoutEvent);
+}
+
+void Server::updateConfiguration(){
+    cModule *Switch = gate("port$i")->getPreviousGate()->getOwnerModule();
+    int moduleAddress;
+    for (int i = 2; i < Switch->gateSize("port$o"); i++){
+        if (Switch->gate("port$o", i)->isConnected())
+        {
+          moduleAddress = Switch->gate("port$o", i)->getId();
+          //EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
+          configuration.push_back(moduleAddress);
+        }
+    }
 }

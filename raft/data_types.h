@@ -20,10 +20,9 @@ struct append_entry_timer
     cMessage *timeoutEvent;
 };
 
-
 enum serverState
 {
     LEADER = 0,
     FOLLOWER = 1,
     CANDIDATE = 2,
-}
+};
