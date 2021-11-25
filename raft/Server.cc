@@ -104,10 +104,13 @@ void Server::handleMessage(cMessage *msg)
   if(msg == sendHearthbeat){
     // Send an empty RPCAppendEntries(= hearthbeat), to all followers
     EV << "Sending hearthbeat to followers\n";
+    log_entry emptyEntry;
+    emptyEntry.term = -1; //convention to explicit heartbeat 
+
     appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
     appendEntriesRPC->setTerm(currentTerm);
     appendEntriesRPC->setLeaderId(myAddress);
-    appendEntriesRPC->setEntry(nullptr);
+    appendEntriesRPC->setEntry(emptyEntry);
     appendEntriesRPC->setLeaderCommit(commitIndex);
     appendEntriesRPC->setSrcAddress(myAddress);
     appendEntriesRPC->setIsBroadcast(true);
@@ -164,7 +167,7 @@ void Server::handleMessage(cMessage *msg)
   {
   case RPC_APPEND_ENTRIES:
     // If is NOT heartbeat
-    if (pk->getEntry() != nullptr){
+    if (pk->getEntry()->getTerm() != -1){
       cancelEvent(electionTimeoutEvent);
       receiverAddress = pk->getSrcAddress();
       //1) Reply false if term < currentTerm 2)Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm 
