@@ -6,6 +6,10 @@ network Raft
     parameters:
         int numServers @prompt("Number of servers") = default(5);
     submodules:
+        admin: Admin{
+            parameters:
+                @display("p=90,70");
+        }
         client: Client {
             parameters:
                 timeout = 5s;
@@ -17,7 +21,7 @@ network Raft
                 queueMaxLen = 100; // buffer max 100 packets
                 @display("p=210,170");
             gates:
-                port[numServers+1];
+                port[numServers+2]; // 1 extra port for the client, and 1 extra for the switch
         }
         server[numServers]: Server {
             parameters:
@@ -25,9 +29,10 @@ network Raft
         }
     connections:
         for i=0..numServers-1 {
-            server[i].port <--> {  delay = 10ms; } <--> switch.port[i];
+            server[i].port <--> {  delay = 10ms; } <--> switch.port[i+2];
         }
-        client.port <--> {  delay = 10ms; } <--> switch.port[numServers];
+        client.port <--> {  delay = 10ms; } <--> switch.port[0];
+        admin.port <--> switch.port[1];
 }
 
 

@@ -13,7 +13,7 @@ class Server : public cSimpleModule
     virtual ~Server();
   private:
     bool isLeader = false;
-    cMessage *sendHearthbeat;
+    cMessage *sendHearthbeat, *temp;
     int myAddress;   // This is the server ID
     int receiverAddress; // This is receiver server ID
 
@@ -41,6 +41,8 @@ class Server : public cSimpleModule
     vector<int> nextIndex;
     vector<int> matchIndex;
 
+    void updateConfiguration();
+
   protected:
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;
@@ -53,6 +55,21 @@ Define_Module(Server);
 Server::~Server()
 {
   cancelAndDelete(sendHearthbeat);
+  cancelAndDelete(temp);
+}
+
+void Server::updateConfiguration()
+{
+    cModule *Switch = gate("port$i")->getPreviousGate()->getOwnerModule();
+    int moduleAddress;
+    for (int i = 2; i < Switch->gateSize("port$o"); i++){
+        if (Switch->gate("port$o", i)->isConnected())
+        {
+          moduleAddress = Switch->gate("port$o", i)->getId();
+          //EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
+          configuration.push_back(moduleAddress);
+        }
+    }
 }
 
 
@@ -60,11 +77,20 @@ void Server::initialize()
 {
   //matchIndex.assign(par("numServer"), 0);
   sendHearthbeat = new cMessage("send-hearthbeat");
+  temp = new cMessage("temp");
 
-  myAddress = gate("port$o")->getNextGate()->getIndex(); // Return index of this server gate port in the Switch
+  // My address is the out port of the switch corresponding to the input port of this module
+  myAddress = gate("port$i")->getPreviousGate()->getId();
+  WATCH(myAddress);
+  EV << "My address is " << myAddress << endl;
+
+  WATCH_VECTOR(configuration);
+  updateConfiguration();
+
 
   if (par("isLeader").boolValue() == true) { 
     scheduleAt(simTime(), sendHearthbeat);
+    //scheduleAt(simTime() + par("processingTime"), temp);
     isLeader = true;
   }
 }
@@ -83,6 +109,11 @@ void Server::handleMessage(cMessage *msg)
     scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
     return;
   }
+  else if (msg == temp){
+    receiverAddress = gate("port$i")->getPreviousGate()->getOwnerModule()->gate("port$o", 1)->getId();
+    RPCnewConfigurationCommitted *committed = new RPCnewConfigurationCommitted("RPC_NEW_CONFIG_COMMITTED", RPC_NEW_CONFIG_COMMITTED);
+    send(committed, receiverAddress);
+  }
   
   RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
 
@@ -90,5 +121,3 @@ void Server::handleMessage(cMessage *msg)
       delete pk;
     }
 }
-
-// Fare un metodo per checkare server facenti parte della configurazione corrente(= connessi allo switch)
