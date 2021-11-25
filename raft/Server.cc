@@ -108,7 +108,7 @@ void Server::handleMessage(cMessage *msg)
     appendEntriesRPC->setTerm(currentTerm);
     appendEntriesRPC->setLeaderId(myAddress);
     appendEntriesRPC->setEntry(nullptr);
-    appendEntriesRPC->setLeaderCommit(commitIndex)
+    appendEntriesRPC->setLeaderCommit(commitIndex);
     appendEntriesRPC->setSrcAddress(myAddress);
     appendEntriesRPC->setIsBroadcast(true);
     send(appendEntriesRPC, "port$o");
@@ -123,7 +123,7 @@ void Server::handleMessage(cMessage *msg)
     requestVoteRPC = new RPCRequestVotePacket("RPC_REQUEST_VOTE", RPC_REQUEST_VOTE);
     requestVoteRPC->setTerm(currentTerm);
     requestVoteRPC->setCandidateId(myAddress);
-    requestVoteRPC->setLastLogIndex(log.back().index);
+    requestVoteRPC->setLastLogIndex(log.back().logIndex);
     requestVoteRPC->setLastLogTerm(log.back().term);
     requestVoteRPC->setSrcAddress(myAddress);
     requestVoteRPC->setIsBroadcast(true);
@@ -133,7 +133,7 @@ void Server::handleMessage(cMessage *msg)
   
   // Retry append entries if an appendEntryTimer is fired 
   for (int i = 0; i < appendEntryTimers.size() ; i++){
-    if (msg == appendEntryTimers[i]){
+    if (msg == appendEntryTimers[i].timeoutEvent){
       log_entry newEntry = appendEntryTimers[i].entry;
       newEntry.configuration.assign(appendEntryTimers[i].entry.configuration.begin(), appendEntryTimers[i].entry.configuration.end());
       //Resend the message
@@ -205,7 +205,7 @@ void Server::handleMessage(cMessage *msg)
       //If i am candidate
       if(status == CANDIDATE){
           if(pk->getTerm() == currentTerm){ //the > case is already tested with updateTerm() before the switch
-            becomeFollower();
+            becomeFollower(msg);
           }
           //otherwise the electionTimeoutEvent remains valid
         }
@@ -250,7 +250,7 @@ void Server::handleMessage(cMessage *msg)
         requestVoteResponseRPC->setSrcAddress(myAddress);
         requestVoteResponseRPC->setDestAddress(receiverAddress);
         send(requestVoteResponseRPC, "port$o");
-        scheduleAt(simTime() +  uniform(par("lowElectionTimeout"), par("highElectionTimeout"), par("seed")), electionTimeoutEvent);
+        scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
       }
       else{
         requestVoteResponseRPC = new RPCRequestVoteResponsePacket("RPC_REQUEST_VOTE_RESPONSE", RPC_REQUEST_VOTE_RESPONSE);
@@ -294,7 +294,7 @@ void Server::handleMessage(cMessage *msg)
         }
 
         for (int newCommitIndex = commitIndex + 1; newCommitIndex < log.size(); newCommitIndex++){
-          if(majority(newCommitIndex) == true && log[newCommitIndex] == currentTerm){
+          if(majority(newCommitIndex) == true && log[newCommitIndex].term == currentTerm){
             commitIndex = newCommitIndex;
           }
         }
