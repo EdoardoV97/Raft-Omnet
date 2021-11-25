@@ -1,4 +1,5 @@
 #include "RPCPacket_m.h"
+#include <algorithm>
 //#include <vector>
 
 using namespace omnetpp;
@@ -60,11 +61,11 @@ class Server : public cSimpleModule
     int getIndex(vector<int> v, int K);
     void appendNewEntryTo(log_entry newEntry, int destAddress, int index);
     bool majority(int N);
-    void applyCommand(log_entry entry,  RPCPacket *pk);
+    void applyCommand(log_entry entry);
     void becomeLeader();
     void becomeCandidate();
-    void becomeFollower(RPCPacket *pk);
-    void updateTerm(RPCPacket *pk);
+    void becomeFollower(cMessage *msg);
+    void updateTerm(cMessage *msg);
 };
 
 Define_Module(Server);
@@ -85,6 +86,7 @@ void Server::initialize()
   myAddress = gate("port$o")->getNextGate()->getIndex(); // Return index of this server gate port in the Switch
   
   // TODO: Initialize the client address
+  // TODO: Initialize the admin address
   updateConfiguration();
   //Pushing the initial configuration in the log
   log_entry firstEntry;
@@ -93,8 +95,8 @@ void Server::initialize()
   firstEntry.term = currentTerm;
   firstEntry.logIndex = 0;
   firstEntry.configuration.assign(configuration.begin(), configuration.end());
-  log.push_back();
-  scheduleAt(simTime() +  uniform(par("lowElectionTimeout"), par("highElectionTimeout")) + , electionTimeoutEvent);
+  log.push_back(firstEntry);
+  scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
 
 void Server::handleMessage(cMessage *msg)
@@ -105,7 +107,7 @@ void Server::handleMessage(cMessage *msg)
     appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
     appendEntriesRPC->setTerm(currentTerm);
     appendEntriesRPC->setLeaderId(myAddress);
-    appendEntriesRPC->setEntries(nullptr);
+    appendEntriesRPC->setEntry(nullptr);
     appendEntriesRPC->setLeaderCommit(commitIndex)
     appendEntriesRPC->setSrcAddress(myAddress);
     appendEntriesRPC->setIsBroadcast(true);
@@ -140,7 +142,7 @@ void Server::handleMessage(cMessage *msg)
       appendEntriesRPC->setLeaderId(myAddress);
       appendEntriesRPC->setPrevLogIndex(appendEntryTimers[i].prevLogIndex); 
       appendEntriesRPC->setPrevLogTerm(appendEntryTimers[i].prevLogTerm);
-      appendEntriesRPC->setEntries(newEntry);
+      appendEntriesRPC->setEntry(newEntry);
       appendEntriesRPC->setLeaderCommit(commitIndex);
       appendEntriesRPC->setSrcAddress(myAddress);
       appendEntriesRPC->setIsBroadcast(false);
@@ -162,7 +164,7 @@ void Server::handleMessage(cMessage *msg)
   {
   case RPC_APPEND_ENTRIES:
     // If is NOT heartbeat
-    if (pk->getEntries() != nullptr){
+    if (pk->getEntry() != nullptr){
       cancelEvent(electionTimeoutEvent);
       receiverAddress = pk->getSrcAddress();
       //1) Reply false if term < currentTerm 2)Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm 
@@ -176,17 +178,17 @@ void Server::handleMessage(cMessage *msg)
         }
       else {
         //3)If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it.
-        if (log[pk->getEntries()->getLogIndex()].logIndex == pk->getEntries()->getLogIndex() && log[pk->getEntries()->getLogIndex()].term != pk->getEntries()->getTerm()){
-          log.resize(pk->getEntries()->getLogIndex());
+        if (log[pk->getEntry()->getLogIndex()].logIndex == pk->getEntry()->getLogIndex() && log[pk->getEntry()->getLogIndex()].term != pk->getEntry()->getTerm()){
+          log.resize(pk->getEntry()->getLogIndex());
         }
         //4)Append any new entries not already in the log.
-        log.push_back(pk->getEntries());
+        log.push_back(pk->getEntry());
         //5)If leaderCommit > commitIndex, set commitIndex = min (leaderCommit, index of last new entry).
         if(pk->getLeaderCommit() > commitIndex){
-          if(pk->getLeaderCommit() < pk->getEntries()->getLogIndex()){
+          if(pk->getLeaderCommit() < pk->getEntry()->getLogIndex()){
             commitIndex = pk->getLeaderCommit();
           } else{
-            commitIndex = pk->getEntries()->getLogIndex();
+            commitIndex = pk->getEntry()->getLogIndex();
           }
         }
         //Reply true
@@ -197,7 +199,7 @@ void Server::handleMessage(cMessage *msg)
         appendEntriesResponseRPC->setDestAddress(receiverAddress);
         send(appendEntriesResponseRPC, "port$o");
       }
-      scheduleAt(simTime() +  uniform(par("lowElectionTimeout"), par("highElectionTimeout")) + , electionTimeoutEvent);
+      scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
     }
     else{  // Heartbeat case
       //If i am candidate
@@ -212,13 +214,13 @@ void Server::handleMessage(cMessage *msg)
           leaderAddress = pk->getLeaderId();
 
           if(pk->getLeaderCommit() > commitIndex){
-            if(pk->getLeaderCommit() < pk->getEntries()->getLogIndex()){
+            if(pk->getLeaderCommit() < pk->getEntry()->getLogIndex()){
               commitIndex = pk->getLeaderCommit();
             } else{
-              commitIndex = pk->getEntries()->getLogIndex();
+              commitIndex = pk->getEntry()->getLogIndex();
               }
           }
-          scheduleAt(simTime() +  uniform(par("lowElectionTimeout"), par("highElectionTimeout")) + , electionTimeoutEvent);
+          scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
         }
     }
 
@@ -248,7 +250,7 @@ void Server::handleMessage(cMessage *msg)
         requestVoteResponseRPC->setSrcAddress(myAddress);
         requestVoteResponseRPC->setDestAddress(receiverAddress);
         send(requestVoteResponseRPC, "port$o");
-        scheduleAt(simTime() +  uniform(par("lowElectionTimeout"), par("highElectionTimeout")), electionTimeoutEvent);
+        scheduleAt(simTime() +  uniform(par("lowElectionTimeout"), par("highElectionTimeout"), par("seed")), electionTimeoutEvent);
       }
       else{
         requestVoteResponseRPC = new RPCRequestVoteResponsePacket("RPC_REQUEST_VOTE_RESPONSE", RPC_REQUEST_VOTE_RESPONSE);
@@ -267,7 +269,7 @@ void Server::handleMessage(cMessage *msg)
       for(int i=0; i < appendEntryTimers.size() ; i++){
         if (receiverAddress == appendEntryTimers[i].destination){
           cancelEvent(appendEntryTimers[i].timeoutEvent);
-          appendEntryTimers.erase(i);
+          appendEntryTimers.erase(appendEntryTimers.begin() + i);
           break;
         }
       }
@@ -357,7 +359,7 @@ void Server::appendNewEntry(log_entry newEntry){
   appendEntriesRPC->setLeaderId(myAddress);
   appendEntriesRPC->setPrevLogIndex(log.back().logIndex);
   appendEntriesRPC->setPrevLogTerm(log.back().term); 
-  appendEntriesRPC->setEntries(newEntry);
+  appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
   appendEntriesRPC->setSrcAddress(myAddress);
   appendEntriesRPC->setIsBroadcast(false);
@@ -393,7 +395,7 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   appendEntriesRPC->setLeaderId(myAddress);
   appendEntriesRPC->setPrevLogIndex(log[nextIndex[index]-1].logIndex); // -1 because the previous
   appendEntriesRPC->setPrevLogTerm(log[nextIndex[index]-1].term);
-  appendEntriesRPC->setEntries(newEntry);
+  appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
   appendEntriesRPC->setSrcAddress(myAddress);
   appendEntriesRPC->setIsBroadcast(false);
@@ -420,10 +422,8 @@ int Server::getIndex(vector<int> v, int K){
     int index = it - v.begin();
     return index;
   }
-  else {
-    // If the element is not present in the vector
-    return -1;
-  }
+  // If the element is not present in the vector
+  return -1;
 }
 
 bool Server::majority(int N){
@@ -434,7 +434,7 @@ bool Server::majority(int N){
       counter++;
     }
   }
-  return counter > (total\2);
+  return counter > (total/2);
 }
 
 void Server::applyCommand(log_entry entry){
@@ -449,7 +449,8 @@ void Server::applyCommand(log_entry entry){
   }
 }
 
-void Server::updateTerm(RPCPacket *pk){
+void Server::updateTerm(cMessage *msg){
+  RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
   if(pk->getTerm() > currentTerm){
     currentTerm = pk->getTerm();
     if(status == CANDIDATE || status == LEADER){
@@ -464,7 +465,7 @@ void Server::becomeCandidate(){
   currentTerm++;
   votedFor = myAddress;
   votes = 1;
-  scheduleAt(simTime() +  uniform(par("lowElectionTimeout"), par("highElectionTimeout")) + , electionTimeoutEvent);
+  scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
 
 void Server::becomeLeader(){
@@ -475,12 +476,13 @@ void Server::becomeLeader(){
   votedFor = -1;
   nextIndex.clear();
   matchIndex.clear();
-  nextIndex = resize(configuration.size(), log.back().logIndex + 1);
-  matchIndex = resize(configuration.size(), 0);
+  nextIndex.resize(configuration.size(), log.back().logIndex + 1);
+  matchIndex.resize(configuration.size(), 0);
   scheduleAt(simTime(), sendHearthbeat); // Trigger istantaneously the sendHeartbeat
 }
 
-void Server::becomeFollower(RPCPacket *pk){
+void Server::becomeFollower(cMessage *msg){
+  RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
   cancelEvent(electionTimeoutEvent);
   status = FOLLOWER;
   if(pk->getKind() == RPC_APPEND_ENTRIES){
@@ -490,7 +492,7 @@ void Server::becomeFollower(RPCPacket *pk){
   votedFor = -1;
   nextIndex.clear();
   matchIndex.clear();
-  scheduleAt(simTime() +  uniform(par("lowElectionTimeout"), par("highElectionTimeout")) + , electionTimeoutEvent);
+  scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
 
 void Server::updateConfiguration(){

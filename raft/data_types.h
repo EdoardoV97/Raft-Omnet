@@ -1,6 +1,7 @@
 #include <vector>
 
 using std::vector;
+using namespace omnetpp;
 
 struct log_entry
 {
