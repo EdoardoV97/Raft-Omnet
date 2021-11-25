@@ -90,7 +90,7 @@ void Server::initialize()
 
   if (par("isLeader").boolValue() == true) { 
     scheduleAt(simTime(), sendHearthbeat);
-    //scheduleAt(simTime() + par("processingTime"), temp);
+    scheduleAt(simTime() + par("processingTime"), temp);
     isLeader = true;
   }
 }
@@ -112,7 +112,9 @@ void Server::handleMessage(cMessage *msg)
   else if (msg == temp){
     receiverAddress = gate("port$i")->getPreviousGate()->getOwnerModule()->gate("port$o", 1)->getId();
     RPCnewConfigurationCommitted *committed = new RPCnewConfigurationCommitted("RPC_NEW_CONFIG_COMMITTED", RPC_NEW_CONFIG_COMMITTED);
-    send(committed, receiverAddress);
+    committed->setDestAddress(receiverAddress);
+    send(committed, "port$o");
+    return;
   }
   
   RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
