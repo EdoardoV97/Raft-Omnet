@@ -51,6 +51,8 @@ class Server : public cSimpleModule
     vector<int> nextIndex;
     vector<int> matchIndex;
 
+    void updateConfiguration();
+
   protected:
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;
@@ -72,6 +74,21 @@ Define_Module(Server);
 Server::~Server()
 {
   cancelAndDelete(sendHearthbeat);
+  cancelAndDelete(temp);
+}
+
+void Server::updateConfiguration()
+{
+    cModule *Switch = gate("port$i")->getPreviousGate()->getOwnerModule();
+    int moduleAddress;
+    for (int i = 2; i < Switch->gateSize("port$o"); i++){
+        if (Switch->gate("port$o", i)->isConnected())
+        {
+          moduleAddress = Switch->gate("port$o", i)->getId();
+          //EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
+          configuration.push_back(moduleAddress);
+        }
+    }
 }
 
 

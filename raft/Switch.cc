@@ -20,8 +20,8 @@ Define_Module(Switch);
 
 void Switch::activity()
 {
-    //simtime_t pkDelay = 1 / (double)par("pkRate");
     int queueMaxLen = (int)par("queueMaxLen");
+    int destAddress;
     cQueue queue("queue");
     for ( ; ; ) {
         // receive msg
@@ -34,30 +34,30 @@ void Switch::activity()
         // model processing delay; packets that arrive meanwhile are queued
         waitAndEnqueue(par("delay"), &queue);
 
-        // send msg to destination
+
         RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
+        // Send in broadcast
         int source = pk->getSrcAddress();
         if (pk->getIsBroadcast() == true){
             EV << "Relaying msg received in broadcast\n";
-            for (int i = 0; i < gateSize("port$o")-1; i++)
+            for (int i = 2; i < gateSize("port$o"); i++){
+                if (gate("port$o", i)->isConnected())
                 {
-                    if (i != source){
-                        pk_copy = pk->dup();
-                        send(pk_copy, "port$o", i);
+                    if (gate("port$o", i)->getId() != source){
+                            pk_copy = pk->dup();
+                            send(pk_copy, "port$o", i);
                     }
                 }
+            }
             delete pk;
         }
+        // Send to specific address
         else{
-            int dest = pk->getDestAddress();
-            EV << "Relaying msg received to addr=" << dest << "\n";
-            send(msg, "port$o", dest);
+            destAddress = pk->getDestAddress();
+            const char* destName = gate(destAddress)->getNextGate()->getOwnerModule()->getFullName();
+            // TODO aggiungere nome del ricevente del messaggio al posto di destAddress
+            EV << "Relaying msg received to " << destName << "  (addr = " << destAddress << ")\n";
+            send(msg, destAddress);
         }
-
-        // display status: normal=queue empty, yellow=queued packets; red=queue overflow
-        int qLen = queue.getLength();
-        if (hasGUI())
-            getDisplayString().setTagArg("i", 1, qLen == 0 ? "" : qLen < queueMaxLen ? "gold" : "red");
     }
 }
-

@@ -13,6 +13,12 @@ enum RPCPacketType
     RPC_REQUEST_VOTE_RESPONSE = 4;
     RPC_CLIENT_COMMAND = 5;
     RPC_CLIENT_COMMAND_RESPONSE = 6;
+    RPC_ADD_SWITCH_PORT = 0;
+    RPC_APPEND_ENTRIES = 1;
+    RPC_REQUEST_VOTE = 2;
+    RPC_INSTALL_SNAPSHOT = 3;
+    RPC_CONFIG_CHANGED = 4;
+    RPC_NEW_CONFIG_COMMITTED = 5;
 };
 
 packet RPCPacket
@@ -37,7 +43,7 @@ packet RPCAppendEntriesPacket extends RPCPacket
     int leaderId;                       // leader identifier so follower can redirect clients --> index of leader gate port in the Switch
     int prevLogIndex;                   // index of log entry immediately preceding new ones          
     int prevLogTerm;                    // term of prevLogIndex entry
-    log_entry entries;                  // log entries to store (empty for heartbeat);
+    log_entry entry;                  // log entries to store (empty for heartbeat);
     int leaderCommit;                   // leader’s commitIndex
 };
 
@@ -68,3 +74,12 @@ packet RPCInstallSnapshotPacket extends RPCPacket
     //TODO Insert fields
     string payload;
 };
+
+
+packet RPCconfigChangedPacket extends RPCPacket
+{
+    string payload;
+};
+
+packet RPCnewConfigurationCommitted extends RPCPacket
+{};
