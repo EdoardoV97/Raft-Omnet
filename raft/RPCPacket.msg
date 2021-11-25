@@ -6,12 +6,19 @@ struct log_entry;
 
 enum RPCPacketType
 {
-    RPC_ADD_SWITCH_PORT = 0;
-    RPC_APPEND_ENTRIES = 1;
-    RPC_REQUEST_VOTE = 2;
-    RPC_INSTALL_SNAPSHOT = 3;
-    RPC_CONFIG_CHANGED = 4;
-    RPC_NEW_CONFIG_COMMITTED = 5;
+    RPC_APPEND_ENTRIES = 0;
+    RPC_REQUEST_VOTE = 1;
+    RPC_INSTALL_SNAPSHOT = 2;
+    RPC_APPEND_ENTRIES_RESPONSE = 3;
+    RPC_REQUEST_VOTE_RESPONSE = 4;
+    RPC_CLIENT_COMMAND = 5;
+    RPC_CLIENT_COMMAND_RESPONSE = 6;
+    RPC_ADD_SWITCH_PORT = 7;
+    RPC_APPEND_ENTRIES = 8;
+    RPC_REQUEST_VOTE = 9;
+    RPC_INSTALL_SNAPSHOT = 10;
+    RPC_CONFIG_CHANGED = 11;
+    RPC_NEW_CONFIG_COMMITTED = 12;
 };
 
 packet RPCPacket
@@ -21,6 +28,14 @@ packet RPCPacket
     bool isBroadcast;
 };
 
+packet RPCClientCommandPacket extends RPCPacket{
+    char var;
+    int value;
+}
+
+packet RPCClientCommandResponsePacket extends RPCPacket{
+    
+}
 
 packet RPCAppendEntriesPacket extends RPCPacket
 {
@@ -63,6 +78,7 @@ packet RPCInstallSnapshotPacket extends RPCPacket
 
 packet RPCconfigChangedPacket extends RPCPacket
 {
+    //TODO add vector
     string payload;
 };
 
