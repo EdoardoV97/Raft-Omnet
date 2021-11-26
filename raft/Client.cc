@@ -20,6 +20,8 @@ class Client : public cSimpleModule
       vector<int> configuration;
 
       int value = 0;
+      // To identify each client request
+      int sequenceNumber = 0;
     
       class Admin *Admin;
       cMessage *sendWrite, *sendRead, *requestTimeoutRead, *requestTimeoutWrite;
@@ -67,6 +69,7 @@ void Client::handleMessage(cMessage *msg){
     receiverAddress = chooseRandomServer();
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
+    clientCommandRPC->setSequenceNumber(sequenceNumber);
     char x = 'x';
     clientCommandRPC->setVar(x);
     clientCommandRPC->setType(READ);
@@ -78,6 +81,7 @@ void Client::handleMessage(cMessage *msg){
     receiverAddress = chooseRandomServer();
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
+    clientCommandRPC->setSequenceNumber(sequenceNumber);
     char x = 'x';
     clientCommandRPC->setVar(x);
     clientCommandRPC->setValue(value);
@@ -111,6 +115,8 @@ void Client::handleMessage(cMessage *msg){
 
 
 void Client::chooseNextRandomOp(){
+  sequenceNumber++;
+
   // Produce a random integer in the range [0,2)
   int randomOp = intrand(2);
   if(randomOp == READ)

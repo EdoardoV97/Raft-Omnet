@@ -29,6 +29,7 @@ packet RPCClientCommandPacket extends RPCPacket{
     int value;
     // Convention: READ = 0, WRITE = 1;
     int type;
+    int sequenceNumber;
 }
 
 packet RPCClientCommandResponsePacket extends RPCPacket{
