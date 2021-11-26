@@ -308,7 +308,7 @@ void Server::handleMessage(cMessage *msg)
             commitIndex = newCommitIndex;
           }
         }
-        if(commitIndex > lastApplied){
+        for(int i=lastApplied ; commitIndex > i ; i++){
           lastApplied++;
           applyCommand(log[lastApplied]);
           //Send response to the client
@@ -388,11 +388,7 @@ void Server::appendNewEntry(log_entry newEntry){
     newTimer.prevLogIndex = log.back().logIndex;
     newTimer.prevLogTerm = log.back().term;
     newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
-    newTimer.entry = newEntry; // Should be sufficient
-    // newTimer.entry.var = newEntry.var;
-    // newTimer.entry.value = newEntry.value;
-    // newTimer.entry.term = newEntry.term;
-    // newTimer.entry.logIndex = newEntry.logIndex;
+    newTimer.entry = newEntry; // Should be sufficient to copy var, value, term, logIndex
     newTimer.entry.configuration.assign(newEntry.configuration.begin(), newEntry.configuration.end()); // copy by value ("deep copy")
     
     appendEntriesRPC->setDestAddress(configuration[i]);
