@@ -140,7 +140,7 @@ void Server::handleMessage(cMessage *msg)
       newEntry.configuration.assign(appendEntryTimers[i].entry.configuration.begin(), appendEntryTimers[i].entry.configuration.end());
       //Resend the message
       appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
-      appendEntriesRPC->setTerm(currentTerm); //giusto?
+      appendEntriesRPC->setTerm(currentTerm);
       appendEntriesRPC->setLeaderId(myAddress);
       appendEntriesRPC->setPrevLogIndex(appendEntryTimers[i].prevLogIndex); 
       appendEntriesRPC->setPrevLogTerm(appendEntryTimers[i].prevLogTerm);
@@ -213,7 +213,8 @@ void Server::handleMessage(cMessage *msg)
           }
           //otherwise the electionTimeoutEvent remains valid
         }
-        else{ //I am not a candidate, remain follower
+        else{ //I am not a candidate, and i am a follower remain follower, otherwise if i am a leader i ignore heartbeat
+          if (status == FOLLOWER){
           cancelEvent(electionTimeoutEvent);
           leaderAddress = pk->getLeaderId();
 
@@ -225,6 +226,7 @@ void Server::handleMessage(cMessage *msg)
               }
           }
           scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
+         }
         }
     }
 
@@ -318,9 +320,7 @@ void Server::handleMessage(cMessage *msg)
           send(clientCommandResponseRPC, "port$o");
         }
       }
-
     }
-    //else nothing?
   }
   break;
   case RPC_REQUEST_VOTE_RESPONSE:
@@ -355,7 +355,8 @@ void Server::handleMessage(cMessage *msg)
     }
     else{ //Forward to leader
       pk->setDestAddress(leaderAddress);
-      send(pk, "port$o");
+      RPCClientCommandPacket *pkCopy = pk->dup();
+      send(pkCopy, "port$o");
     }
   }
   break;
@@ -538,6 +539,10 @@ void Server::becomeLeader(){
 
 void Server::becomeFollower(RPCPacket *pkGeneric){
   cancelEvent(electionTimeoutEvent);
+  cancelEvent(sendHearthbeat);
+  for (int i = 0; i < appendEntryTimers.size() ; i++){
+    cancelEvent(appendEntryTimers[i].timeoutEvent);
+  }
   status = FOLLOWER;
   if(pkGeneric->getKind() == RPC_APPEND_ENTRIES){
     RPCAppendEntriesPacket *pk = check_and_cast<RPCAppendEntriesPacket *>(pkGeneric);
