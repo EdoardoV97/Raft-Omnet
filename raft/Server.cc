@@ -361,8 +361,13 @@ void Server::handleMessage(cMessage *msg)
     RPCClientCommandPacket *pk = check_and_cast<RPCClientCommandPacket *>(pkGeneric);
     if(status == LEADER){ //Process incoming command from a client
       log_entry newEntry;
-      newEntry.var = pk->getVar();
-      newEntry.value = pk->getValue();
+      if(pk->getType() == 1){
+        newEntry.var = pk->getVar();
+        newEntry.value = pk->getValue();
+      }
+      else{
+        newEntry.value = -2; // Convention for no-op entry
+      }
       newEntry.term = currentTerm;
       newEntry.logIndex = log.size();
       log.push_back(newEntry);
