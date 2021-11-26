@@ -1,5 +1,6 @@
 #include "RPCPacket_m.h"
 #include <algorithm>
+#include "Admin.h"
 
 using namespace omnetpp;
 using std::vector;
@@ -20,15 +21,16 @@ class Client : public cSimpleModule
 
       int value = 0;
     
-      cModule Admin;
+      class Admin *Admin;
       cMessage *sendWrite, *sendRead, *requestTimeoutRead, *requestTimeoutWrite;
       RPCClientCommandPacket *clientCommandRPC;
       // Convention: READ = 0, WRITE = 1;
       const int READ = 0;
       const int WRITE = 1;
 
-      void chooseRandomOp();
+      void chooseNextRandomOp();
       void initializeConfiguration();
+      int chooseRandomServer();
     protected: 
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;
@@ -47,7 +49,7 @@ Client::~Client()
 
 void Client::initialize(){
   myAddress = gate("port$i")->getPreviousGate()->getId();
-  Admin = gate("port$i")->getPreviousGate()->getOwnerModule()->gate("port$o", 1)->getOwnerModule();
+  Admin = check_and_cast<class Admin *>(gate("port$i")->getPreviousGate()->getOwnerModule()->gate("port$o", 1)->getOwnerModule());
 
   initializeConfiguration();
 
@@ -64,22 +66,24 @@ void Client::handleMessage(cMessage *msg){
   if (msg == sendRead){
     receiverAddress = chooseRandomServer();
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
-    clientCommandRPC->setDestAddress(destAddress);
-    clientCommandRPC->setVar("x");
+    clientCommandRPC->setDestAddress(receiverAddress);
+    char x = 'x';
+    clientCommandRPC->setVar(x);
     clientCommandRPC->setType(READ);
     send(clientCommandRPC, "port$o");
-    scheduleAt(simTime() + par("requestTimeout")), requestTimeoutRead);
+    scheduleAt(simTime() + par("requestTimeout"), requestTimeoutRead);
     return;
   }
   else if (msg == sendWrite) {
     receiverAddress = chooseRandomServer();
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
-    clientCommandRPC->setDestAddress(destAddress);
-    clientCommandRPC->setVar("x");
+    clientCommandRPC->setDestAddress(receiverAddress);
+    char x = 'x';
+    clientCommandRPC->setVar(x);
     clientCommandRPC->setValue(value);
     clientCommandRPC->setType(WRITE);
     send(clientCommandRPC, "port$o");
-    scheduleAt(simTime() + par("requestTimeout")), requestTimeoutWrite);
+    scheduleAt(simTime() + par("requestTimeout"), requestTimeoutWrite);
     return;
   }
   // If timeout without receiving response, try to resend the mex, choosing another server
@@ -93,7 +97,7 @@ void Client::handleMessage(cMessage *msg){
   if (pk->getKind() == RPC_CONFIG_CHANGED){
     // Update config in response to Admin mex
     configuration.clear();
-    configuration.assign(Admin.configuration.begin(), Admin.configuration.end());
+    configuration.assign(Admin->configuration.begin(), Admin->configuration.end());
   }
   else if (pk->getKind() == RPC_CLIENT_COMMAND_RESPONSE){
     cancelEvent(requestTimeoutRead);
@@ -108,7 +112,7 @@ void Client::handleMessage(cMessage *msg){
 
 void Client::chooseNextRandomOp(){
   // Produce a random integer in the range [0,2)
-  int randomOp = cRNG::intRand(2);
+  int randomOp = intrand(2);
   if(randomOp == READ)
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendRead);
   else{
@@ -118,7 +122,7 @@ void Client::chooseNextRandomOp(){
 }
 
 int Client::chooseRandomServer(){
-  int randomServer = cRNG::intRand(configuration.size());
+  int randomServer = intrand(configuration.size());
   return configuration[randomServer];
 }
 
