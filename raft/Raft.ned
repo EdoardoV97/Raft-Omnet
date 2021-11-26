@@ -4,7 +4,7 @@
 network Raft
 {
     parameters:
-        int numServers @prompt("Number of servers") = default(5);
+        int numServers @prompt("Number of servers") = default(3);
     submodules:
         admin: Admin{
             parameters:

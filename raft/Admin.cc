@@ -89,6 +89,7 @@ void Admin::initialize()
     // Create the self mexs
     changeConfig = new cMessage("changeConfig");
 
+    WATCH(myAddress);
     WATCH_VECTOR(configuration);
     WATCH_VECTOR(toPurge);
     updateConfiguration();

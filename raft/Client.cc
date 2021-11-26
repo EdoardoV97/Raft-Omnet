@@ -53,6 +53,9 @@ void Client::initialize(){
   myAddress = gate("port$i")->getPreviousGate()->getId();
   Admin = (gate("port$i")->getPreviousGate()->getOwnerModule()->gate("port$o", 1)->getOwnerModule());
 
+  WATCH_VECTOR(configuration);
+  WATCH(myAddress);
+
   initializeConfiguration();
 
   sendWrite = new cMessage("sendWrite");

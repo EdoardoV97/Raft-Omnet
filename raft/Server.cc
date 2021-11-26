@@ -85,9 +85,13 @@ void Server::initialize()
   electionTimeoutEvent = new cMessage("election-timeout-event");
 
   // Initialize addresses
-  myAddress = gate("port$o")->getNextGate()->getIndex(); // Return index of this server gate port in the Switch
+  myAddress = gate("port$i")->getPreviousGate()->getId(); // Return index of this server gate port in the Switch
   clientAddress = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 0)->getId();
   adminAddress = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 1)->getId();
+
+  WATCH(clientAddress);
+  WATCH(adminAddress);
+  WATCH(myAddress);
   
   initializeConfiguration();
   //Pushing the initial configuration in the log
