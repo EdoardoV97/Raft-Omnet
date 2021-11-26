@@ -371,7 +371,7 @@ void Server::handleMessage(cMessage *msg)
       newEntry.term = currentTerm;
       newEntry.logIndex = log.size();
       log.push_back(newEntry);
-      seqNum = pk->getSequenceNumber();
+      seqNum = pk->getSequenceNumber(); // Save the sequence number to reply to the client
       cancelEvent(sendHearthbeat);
       appendNewEntry(newEntry);
       scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
