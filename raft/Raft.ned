@@ -12,7 +12,7 @@ network Raft
         }
         client: Client {
             parameters:
-                timeout = 5s;
+                requestTimeout = 5s;
                 @display("p=210,70");
         }
         switch: Switch {

@@ -23,7 +23,7 @@ class Client : public cSimpleModule
       // To identify each client request
       int sequenceNumber = 0;
     
-      class Admin *Admin;
+      cModule *Admin;
       cMessage *sendWrite, *sendRead, *requestTimeoutRead, *requestTimeoutWrite;
       RPCClientCommandPacket *clientCommandRPC;
       // Convention: READ = 0, WRITE = 1;
@@ -51,7 +51,7 @@ Client::~Client()
 
 void Client::initialize(){
   myAddress = gate("port$i")->getPreviousGate()->getId();
-  Admin = check_and_cast<class Admin *>(gate("port$i")->getPreviousGate()->getOwnerModule()->gate("port$o", 1)->getOwnerModule());
+  Admin = (gate("port$i")->getPreviousGate()->getOwnerModule()->gate("port$o", 1)->getOwnerModule());
 
   initializeConfiguration();
 
@@ -100,8 +100,10 @@ void Client::handleMessage(cMessage *msg){
   RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
   if (pk->getKind() == RPC_CONFIG_CHANGED){
     // Update config in response to Admin mex
+    class Admin *admin = check_and_cast<class Admin *>(Admin);
+
     configuration.clear();
-    configuration.assign(Admin->configuration.begin(), Admin->configuration.end());
+    configuration.assign(admin->configuration.begin(), admin->configuration.end());
   }
   else if (pk->getKind() == RPC_CLIENT_COMMAND_RESPONSE){
     cancelEvent(requestTimeoutRead);
