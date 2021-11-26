@@ -123,7 +123,8 @@ void Client::chooseNextRandomOp(){
   sequenceNumber++;
 
   // Produce a random integer in the range [0,2)
-  int randomOp = intrand(2);
+  //int randomOp = intrand(2);
+  int randomOp = 1;
   if(randomOp == READ)
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendRead);
   else{

@@ -45,8 +45,8 @@ class Server : public cSimpleModule
     vector<log_entry> log;
 
     // Volatile state --> Reinitialize after crash
-    int commitIndex = 0; // E se il primo log lo committiamo sempre noi??
-    int lastApplied = 0;
+    int commitIndex = 1; // E se il primo log lo committiamo sempre noi??
+    int lastApplied = 1;
 
     // Volatile state on leaders --> Reinitialized after election
     vector<int> nextIndex;
@@ -102,6 +102,8 @@ void Server::initialize()
   
   WATCH_VECTOR(nextIndex);
   WATCH_VECTOR(matchIndex);
+
+  WATCH(status);
 
   initializeConfiguration();
   //Pushing the initial configuration in the log
@@ -267,7 +269,7 @@ void Server::handleMessage(cMessage *msg)
       send(requestVoteResponseRPC, "port$o");
     } else{
       //2)If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote.
-      if((votedFor == -1 || votedFor == pk->getCandidateId()) && (log.back().term <= pk->getLastLogTerm() || (log.back().term == pk->getLastLogTerm() && log.back().logIndex <= pk->getLastLogIndex()))){
+      if((votedFor == -1 || votedFor == pk->getCandidateId()) && (log.back().term < pk->getLastLogTerm() || (log.back().term == pk->getLastLogTerm() && log.back().logIndex <= pk->getLastLogIndex()))){
         cancelEvent(electionTimeoutEvent);
         votedFor = pk->getCandidateId();
         requestVoteResponseRPC = new RPCRequestVoteResponsePacket("RPC_REQUEST_VOTE_RESPONSE", RPC_REQUEST_VOTE_RESPONSE);

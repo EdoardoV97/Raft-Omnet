@@ -17,7 +17,7 @@ network Raft
         }
         switch: Switch {
             parameters:
-                delay = 0.005s; // Time switch need to process a mex
+                delay = 0.005s;
                 queueMaxLen = 100; // buffer max 100 packets
                 @display("p=210,170");
             gates:
@@ -29,7 +29,7 @@ network Raft
         }
     connections:
         for i=0..numServers-1 {
-            server[i].port <--> {  delay = 10ms; } <--> switch.port[i+2];
+            server[i].port <--> {  delay = 5ms; } <--> switch.port[i+2];
         }
         client.port <--> {  delay = 10ms; } <--> switch.port[0];
         admin.port <--> switch.port[1];
