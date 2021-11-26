@@ -26,7 +26,7 @@ class Server : public cSimpleModule
 
     int adminAddress;  // This is the admin address ID
     int clientAddress; // This is the client ID
-
+    int seqNum; // This is the last client's message sequence number.
     // Pointers to handle RPC mexs
     RPCAppendEntriesPacket *appendEntriesRPC = nullptr;
     RPCAppendEntriesResponsePacket *appendEntriesResponseRPC = nullptr;
@@ -371,7 +371,7 @@ void Server::handleMessage(cMessage *msg)
       newEntry.term = currentTerm;
       newEntry.logIndex = log.size();
       log.push_back(newEntry);
-      
+      seqNum = pk->getSequenceNumber();
       cancelEvent(sendHearthbeat);
       appendNewEntry(newEntry);
       scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
