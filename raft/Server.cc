@@ -92,7 +92,17 @@ void Server::initialize()
   WATCH(clientAddress);
   WATCH(adminAddress);
   WATCH(myAddress);
+  WATCH_VECTOR(configuration);
+  WATCH(x);
+  WATCH(currentTerm);
+  WATCH(votedFor);
+  //WATCH_RW(log);
+  WATCH(commitIndex);
+  WATCH(lastApplied);
   
+  WATCH_VECTOR(nextIndex);
+  WATCH_VECTOR(matchIndex);
+
   initializeConfiguration();
   //Pushing the initial configuration in the log
   log_entry firstEntry;
