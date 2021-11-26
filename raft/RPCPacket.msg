@@ -32,7 +32,7 @@ packet RPCClientCommandPacket extends RPCPacket{
 packet RPCClientCommandResponsePacket extends RPCPacket{
     
 }
-
+// NOTA: si possono specificare valori di default!
 packet RPCAppendEntriesPacket extends RPCPacket
 {
     int term;                           // leader's term

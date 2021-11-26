@@ -64,8 +64,8 @@ class Server : public cSimpleModule
     void applyCommand(log_entry entry);
     void becomeLeader();
     void becomeCandidate();
-    void becomeFollower(cMessage *msg);
-    void updateTerm(cMessage *msg);
+    void becomeFollower(RPCPacket *pkGeneric);
+    void updateTerm(RPCPacket *pkGeneric);
 };
 
 Define_Module(Server);
@@ -80,7 +80,6 @@ Server::~Server()
 
 void Server::initialize()
 {
-  //matchIndex.assign(par("numServer"), 0);
   sendHearthbeat = new cMessage("send-hearthbeat");
   electionTimeoutEvent = new cMessage("election-timeout-event");
   myAddress = gate("port$o")->getNextGate()->getIndex(); // Return index of this server gate port in the Switch
@@ -159,15 +158,17 @@ void Server::handleMessage(cMessage *msg)
   }
     
   
-  RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
+  RPCPacket *pkGeneric = check_and_cast<RPCPacket *>(msg);
 
-  updateTerm(pk);
+  updateTerm(pkGeneric);
 
-  switch (pk->getKind())
+  switch (pkGeneric->getKind())
   {
   case RPC_APPEND_ENTRIES:
+  {
+    RPCAppendEntriesPacket *pk = check_and_cast<RPCAppendEntriesPacket *>(pkGeneric);
     // If is NOT heartbeat
-    if (pk->getEntry()->getTerm() != -1){
+    if (pk->getEntry().term != -1){
       cancelEvent(electionTimeoutEvent);
       receiverAddress = pk->getSrcAddress();
       //1) Reply false if term < currentTerm 2)Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm 
@@ -181,17 +182,17 @@ void Server::handleMessage(cMessage *msg)
         }
       else {
         //3)If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it.
-        if (log[pk->getEntry()->getLogIndex()].logIndex == pk->getEntry()->getLogIndex() && log[pk->getEntry()->getLogIndex()].term != pk->getEntry()->getTerm()){
-          log.resize(pk->getEntry()->getLogIndex());
+        if (log[pk->getEntry().logIndex].logIndex == pk->getEntry().logIndex && log[pk->getEntry().logIndex].term != pk->getEntry().term){
+          log.resize(pk->getEntry().logIndex);
         }
         //4)Append any new entries not already in the log.
         log.push_back(pk->getEntry());
         //5)If leaderCommit > commitIndex, set commitIndex = min (leaderCommit, index of last new entry).
         if(pk->getLeaderCommit() > commitIndex){
-          if(pk->getLeaderCommit() < pk->getEntry()->getLogIndex()){
+          if(pk->getLeaderCommit() < pk->getEntry().logIndex){
             commitIndex = pk->getLeaderCommit();
           } else{
-            commitIndex = pk->getEntry()->getLogIndex();
+            commitIndex = pk->getEntry().logIndex;
           }
         }
         //Reply true
@@ -208,7 +209,7 @@ void Server::handleMessage(cMessage *msg)
       //If i am candidate
       if(status == CANDIDATE){
           if(pk->getTerm() == currentTerm){ //the > case is already tested with updateTerm() before the switch
-            becomeFollower(msg);
+            becomeFollower(pk);
           }
           //otherwise the electionTimeoutEvent remains valid
         }
@@ -217,10 +218,10 @@ void Server::handleMessage(cMessage *msg)
           leaderAddress = pk->getLeaderId();
 
           if(pk->getLeaderCommit() > commitIndex){
-            if(pk->getLeaderCommit() < pk->getEntry()->getLogIndex()){
+            if(pk->getLeaderCommit() < pk->getEntry().logIndex){
               commitIndex = pk->getLeaderCommit();
             } else{
-              commitIndex = pk->getEntry()->getLogIndex();
+              commitIndex = pk->getEntry().logIndex;
               }
           }
           scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
@@ -231,8 +232,11 @@ void Server::handleMessage(cMessage *msg)
       lastApplied++;
       applyCommand(log[lastApplied]);
     }
-    break;
+  }
+  break;
   case RPC_REQUEST_VOTE:
+  {
+    RPCRequestVotePacket *pk = check_and_cast<RPCRequestVotePacket *>(pkGeneric);
     receiverAddress = pk->getSrcAddress();
     //1)Reply false if term < currentTerm.
     if (pk->getTerm() < currentTerm){
@@ -244,7 +248,7 @@ void Server::handleMessage(cMessage *msg)
       send(requestVoteResponseRPC, "port$o");
     } else{
       //2)If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote.
-      if((votedFor == -1 || votedFor == pk->getCandidateId()) && (log.back().term <= pk-.lastLogTerm() || (log.back().term == pk->getLestLogTerm() && log.back().logIndex <= pk->getLastLogIndex()))){
+      if((votedFor == -1 || votedFor == pk->getCandidateId()) && (log.back().term <= pk->getLastLogTerm() || (log.back().term == pk->getLastLogTerm() && log.back().logIndex <= pk->getLastLogIndex()))){
         cancelEvent(electionTimeoutEvent);
         votedFor = pk->getCandidateId();
         requestVoteResponseRPC = new RPCRequestVoteResponsePacket("RPC_REQUEST_VOTE_RESPONSE", RPC_REQUEST_VOTE_RESPONSE);
@@ -264,8 +268,11 @@ void Server::handleMessage(cMessage *msg)
         send(requestVoteResponseRPC, "port$o");
       }
     }
-    break;
+  }
+  break;
   case RPC_APPEND_ENTRIES_RESPONSE:
+  {
+    RPCAppendEntriesResponsePacket *pk = check_and_cast<RPCAppendEntriesResponsePacket *>(pkGeneric);
     if(status == LEADER){
       receiverAddress = pk->getSrcAddress();
       
@@ -314,8 +321,11 @@ void Server::handleMessage(cMessage *msg)
 
     }
     //else nothing?
-    break;
+  }
+  break;
   case RPC_REQUEST_VOTE_RESPONSE:
+  {
+    RPCRequestVoteResponsePacket *pk = check_and_cast<RPCRequestVoteResponsePacket *>(pkGeneric);
     //If i am still candidate
     if(status == CANDIDATE){
       if (pk->getVoteGranted() == true){
@@ -326,8 +336,11 @@ void Server::handleMessage(cMessage *msg)
         becomeLeader();
       }
     }
-    break;
+  }
+  break;
   case RPC_CLIENT_COMMAND:
+  {
+    RPCClientCommandPacket *pk = check_and_cast<RPCClientCommandPacket *>(pkGeneric);
     if(status == LEADER){ //Process incoming command from a client
       log_entry newEntry;
       newEntry.var = pk->getVar();
@@ -344,12 +357,13 @@ void Server::handleMessage(cMessage *msg)
       pk->setDestAddress(leaderAddress);
       send(pk, "port$o");
     }
-    break;
+  }
+  break;
   default:
     break;
   }
 
-  delete pk;
+  delete pkGeneric;
     
 }
 
@@ -452,13 +466,55 @@ void Server::applyCommand(log_entry entry){
   }
 }
 
-void Server::updateTerm(cMessage *msg){
-  RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
-  if(pk->getTerm() > currentTerm){
+void Server::updateTerm(RPCPacket *pkGeneric){
+  switch (pkGeneric->getKind())
+  {
+  case RPC_APPEND_ENTRIES:
+  {
+    RPCAppendEntriesPacket *pk = check_and_cast<RPCAppendEntriesPacket *>(pkGeneric);
+    if(pk->getTerm() > currentTerm){
     currentTerm = pk->getTerm();
     if(status == CANDIDATE || status == LEADER){
       becomeFollower(pk);
     }
+  }
+  }
+    break;
+  case RPC_REQUEST_VOTE:
+  {
+    RPCRequestVotePacket *pk = check_and_cast<RPCRequestVotePacket *>(pkGeneric);
+    if(pk->getTerm() > currentTerm){
+    currentTerm = pk->getTerm();
+    if(status == CANDIDATE || status == LEADER){
+      becomeFollower(pk);
+    }
+  }
+  }
+    break;
+  case RPC_APPEND_ENTRIES_RESPONSE:
+  {
+    RPCAppendEntriesResponsePacket *pk = check_and_cast<RPCAppendEntriesResponsePacket *>(pkGeneric);
+    if(pk->getTerm() > currentTerm){
+    currentTerm = pk->getTerm();
+    if(status == CANDIDATE || status == LEADER){
+      becomeFollower(pk);
+    }
+  }
+  }
+    break;
+  case RPC_REQUEST_VOTE_RESPONSE:
+  {
+    RPCRequestVoteResponsePacket *pk = check_and_cast<RPCRequestVoteResponsePacket *>(pkGeneric);
+    if(pk->getTerm() > currentTerm){
+    currentTerm = pk->getTerm();
+    if(status == CANDIDATE || status == LEADER){
+      becomeFollower(pk);
+    }
+  }
+  }
+    break;
+  default:
+    break;
   }
   return;
 }
@@ -484,11 +540,11 @@ void Server::becomeLeader(){
   scheduleAt(simTime(), sendHearthbeat); // Trigger istantaneously the sendHeartbeat
 }
 
-void Server::becomeFollower(cMessage *msg){
-  RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
+void Server::becomeFollower(RPCPacket *pkGeneric){
   cancelEvent(electionTimeoutEvent);
   status = FOLLOWER;
-  if(pk->getKind() == RPC_APPEND_ENTRIES){
+  if(pkGeneric->getKind() == RPC_APPEND_ENTRIES){
+    RPCAppendEntriesPacket *pk = check_and_cast<RPCAppendEntriesPacket *>(pkGeneric);
     leaderAddress = pk->getLeaderId();
   }
   votes = 0;
