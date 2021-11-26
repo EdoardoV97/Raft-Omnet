@@ -27,6 +27,8 @@ packet RPCPacket
 packet RPCClientCommandPacket extends RPCPacket{
     char var;
     int value;
+    // Convention: READ = 0, WRITE = 1;
+    int type;
 }
 
 packet RPCClientCommandResponsePacket extends RPCPacket{
@@ -74,7 +76,7 @@ packet RPCInstallSnapshotPacket extends RPCPacket
 
 packet RPCconfigChangedPacket extends RPCPacket
 {
-    //TODO add vector
+    // TODO: add the config vector in the RPCconfigChangedPacket
     string payload;
 };
 

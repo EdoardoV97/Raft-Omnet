@@ -5,9 +5,9 @@
 simple Client
 {
     parameters:
-        double timeout @unit(s) @prompt("Connection timeout") = default(20s);
-        volatile double connIaTime @unit(s) @prompt("Connection interarrival time") = default(10s);
-        volatile double queryIaTime @unit(s) @prompt("Query interarrival time") = default(2s);
+        double lowCommandTimeout @unit(s) = default(0.03s);
+        double highCommandTimeout @unit(s) = default(0.05s);
+        double requestTimeout @unit(s) @prompt("Connection timeout") = default(20s);
         @display("i=device/laptop");
     gates:
         inout port;

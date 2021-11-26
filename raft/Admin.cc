@@ -10,12 +10,15 @@ class Admin : public cSimpleModule
 {
   public: 
     virtual ~Admin();
+
+    // Actual cluster configuration
+    vector<int> configuration;
   private:
     int myAddress;
     int numberOfNewServers, numberOfServersToRemove;
     int numberOfserversToRemove;
 
-    // Actual configuration
+    // Actual cluster configuration
     vector<int> configuration;
 
     // Servers to purge
@@ -166,20 +169,18 @@ void Admin::handleMessage(cMessage *msg)
               EV << "Added ID: " << purgedAddress << " to toPurge Vector" << endl;
               configuration.erase(configuration.begin() + configuration.size() - 1 - numberOfNewServers);
             }
-            // 3) Now we can inform the cluster of the change
+            // 3) Now we can inform the cluster and the client of the change
             //configChangedRPC = new RPCconfigChangedPacket("RPC_CONFIG_CHANGED", RPC_CONFIG_CHANGED);
-            // TODO add the config vector in the RPCconfigChangedPacket
             //send(configChangedRPC, "port$o");
             return;
         }
     }
 
-    // The leader has committed the new configuration, so old servers can be shutted down
+    // 4) The leader has committed the new configuration, so old servers can be shutted down
     RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
     if (pk->getKind() == RPC_NEW_CONFIG_COMMITTED){
       deleteServer();
       bubble("Shutting down old servers");
-      // Reset the toPurge vector, since servers have been deleted
       toPurge.clear();
       delete pk;
     }

@@ -1,6 +1,5 @@
 #include "RPCPacket_m.h"
 #include <algorithm>
-//#include <vector>
 
 using namespace omnetpp;
 using std::vector;
@@ -25,7 +24,8 @@ class Server : public cSimpleModule
     int votes = 0; // This is the number of received votes (meaninful when status = candidate)
     int leaderAddress; // This is the leader ID
 
-    int clientAddress; // This is the client's address
+    int adminAddress;  // This is the admin address ID
+    int clientAddress; // This is the client ID
 
     // Pointers to handle RPC mexs
     RPCAppendEntriesPacket *appendEntriesRPC = nullptr;
@@ -52,7 +52,7 @@ class Server : public cSimpleModule
     vector<int> nextIndex;
     vector<int> matchIndex;
 
-    void updateConfiguration();
+    void initializeConfiguration();
 
   protected:
     virtual void initialize() override;
@@ -80,13 +80,16 @@ Server::~Server()
 
 void Server::initialize()
 {
+  // Create self messages needed for timeouts
   sendHearthbeat = new cMessage("send-hearthbeat");
   electionTimeoutEvent = new cMessage("election-timeout-event");
+
+  // Initialize addresses
   myAddress = gate("port$o")->getNextGate()->getIndex(); // Return index of this server gate port in the Switch
+  clientAddress = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 0)->getId();
+  adminAddress = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 1)->getId();
   
-  // TODO: Initialize the client address
-  // TODO: Initialize the admin address
-  updateConfiguration();
+  initializeConfiguration();
   //Pushing the initial configuration in the log
   log_entry firstEntry;
   firstEntry.var = 'x';
@@ -367,8 +370,6 @@ void Server::handleMessage(cMessage *msg)
     
 }
 
-// Fare un metodo per checkare server facenti parte della configurazione corrente(= connessi allo switch)
-
 void Server::appendNewEntry(log_entry newEntry){
   
   appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
@@ -554,7 +555,7 @@ void Server::becomeFollower(RPCPacket *pkGeneric){
   scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
 
-void Server::updateConfiguration(){
+void Server::initializeConfiguration(){
     cModule *Switch = gate("port$i")->getPreviousGate()->getOwnerModule();
     int moduleAddress;
     for (int i = 2; i < Switch->gateSize("port$o"); i++){
