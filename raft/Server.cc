@@ -343,6 +343,7 @@ void Server::handleMessage(cMessage *msg)
   break;
   case RPC_CLIENT_COMMAND:
   {
+    // TODO: Split in read and write case
     RPCClientCommandPacket *pk = check_and_cast<RPCClientCommandPacket *>(pkGeneric);
     if(status == LEADER){ //Process incoming command from a client
       log_entry newEntry;
