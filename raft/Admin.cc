@@ -1,42 +1,12 @@
 #include "RPCPacket_m.h"
-#include<string>
+#include <string>
+#include "Admin.h"
 
 using namespace omnetpp;
 using std::vector;
 using std::__cxx11::to_string;
 using std::string;
 
-class Admin : public cSimpleModule
-{
-  public: 
-    virtual ~Admin();
-  private:
-    int myAddress;
-    int numberOfNewServers, numberOfServersToRemove;
-    int numberOfserversToRemove;
-
-    // Actual configuration
-    vector<int> configuration;
-
-    // Servers to purge
-    vector<int> toPurge;
-    cModule *Switch, *serverToPurge;
-
-    cMessage *changeConfig;
-    cGate *newServerPortIN, *newServerPortOUT;
-    cGate *newSwitchPortIN, *newSwitchPortOUT;
-
-    // RPC messages
-    RPCconfigChangedPacket *configChangedRPC;
-
-    // Methods
-    void createNewServer(int index);
-    void deleteServer();
-    void updateConfiguration();
-  protected: 
-    virtual void initialize() override;
-    virtual void handleMessage(cMessage *msg) override;
-};
 
 Define_Module(Admin);
 
@@ -166,20 +136,18 @@ void Admin::handleMessage(cMessage *msg)
               EV << "Added ID: " << purgedAddress << " to toPurge Vector" << endl;
               configuration.erase(configuration.begin() + configuration.size() - 1 - numberOfNewServers);
             }
-            // 3) Now we can inform the cluster of the change
+            // 3) Now we can inform the cluster and the client of the change
             //configChangedRPC = new RPCconfigChangedPacket("RPC_CONFIG_CHANGED", RPC_CONFIG_CHANGED);
-            // TODO add the config vector in the RPCconfigChangedPacket
             //send(configChangedRPC, "port$o");
             return;
         }
     }
 
-    // The leader has committed the new configuration, so old servers can be shutted down
+    // 4) The leader has committed the new configuration, so old servers can be shutted down
     RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
     if (pk->getKind() == RPC_NEW_CONFIG_COMMITTED){
       deleteServer();
       bubble("Shutting down old servers");
-      // Reset the toPurge vector, since servers have been deleted
       toPurge.clear();
       delete pk;
     }
