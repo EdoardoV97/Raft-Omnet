@@ -475,8 +475,11 @@ bool Server::majority(int N){
 }
 
 void Server::applyCommand(log_entry entry){
-  switch (entry.var)
-  {
+  if(entry.value == -2){ //no_op entry
+    return;
+  }
+
+  switch (entry.var){
   case 'x':
     x = entry.value;
     break;
@@ -484,6 +487,7 @@ void Server::applyCommand(log_entry entry){
   default:
     break;
   }
+  return;
 }
 
 void Server::updateTerm(RPCPacket *pkGeneric){
