@@ -335,7 +335,7 @@ void Server::handleMessage(cMessage *msg)
           lastApplied++;
           applyCommand(log[lastApplied]);
           
-          //Send response to the client
+          //Send response to the client TODO: check better READ...probably not ok
           clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
           if(log[lastApplied].value == -2){ //If it is a no_op entry
             clientCommandResponseRPC->setValue(x);
@@ -396,7 +396,7 @@ void Server::handleMessage(cMessage *msg)
       appendNewEntry(newEntry);
       scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
     }
-    else{ //TODO!! rispondere al client chi è il Leader che conosce
+    else{ //Redirect the client to the last known leader
       clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
       clientCommandResponseRPC->setRedirect(true);
       clientCommandResponseRPC->setLastKnownLeader(leaderAddress); //che succede se all'inizio mando a un id che non esiste ad esempio?
