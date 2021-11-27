@@ -21,7 +21,7 @@ packet RPCPacket
 {
     int srcAddress;
     int destAddress;
-    bool isBroadcast;
+    bool isBroadcast = false;  //Va bene come valore di default?
 };
 
 packet RPCClientCommandPacket extends RPCPacket{
@@ -33,7 +33,10 @@ packet RPCClientCommandPacket extends RPCPacket{
 }
 
 packet RPCClientCommandResponsePacket extends RPCPacket{
-    
+    int sequenceNumber;
+    int value;
+    bool redirect = false;
+    int lastKnownLeader;
 }
 // NOTA: si possono specificare valori di default!
 packet RPCAppendEntriesPacket extends RPCPacket

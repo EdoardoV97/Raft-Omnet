@@ -26,7 +26,9 @@ class Server : public cSimpleModule
 
     int adminAddress;  // This is the admin address ID
     int clientAddress; // This is the client ID
-    int seqNum; // This is the last client's message sequence number.
+    int latestSequenceNumber; // This is the last client's message sequence number.
+    int latestResponseToClient; // This is the latest response sent to the client (meaningfull only if READ, and in this case represent the read "value" of the state machine, x)
+
     // Pointers to handle RPC mexs
     RPCAppendEntriesPacket *appendEntriesRPC = nullptr;
     RPCAppendEntriesResponsePacket *appendEntriesResponseRPC = nullptr;
@@ -329,13 +331,19 @@ void Server::handleMessage(cMessage *msg)
             commitIndex = newCommitIndex;
           }
         }
-        for(int i=lastApplied ; commitIndex > i ; i++){
+        for(int i=lastApplied; commitIndex > i; i++){
           lastApplied++;
           applyCommand(log[lastApplied]);
+          
           //Send response to the client
           clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
-          requestVoteResponseRPC->setSrcAddress(myAddress);
-          requestVoteResponseRPC->setDestAddress(clientAddress);
+          if(log[lastApplied].value == -2){ //If it is a no_op entry
+            requestVoteResponseRPC->setValue(x);
+            latestResponseToClient = x;
+          }
+          clientCommandResponseRPC->setSequenceNumber(latestSequenceNumber);
+          clientCommandResponseRPC->setSrcAddress(myAddress);
+          clientCommandResponseRPC->setDestAddress(clientAddress);
           send(clientCommandResponseRPC, "port$o");
         }
       }
@@ -359,9 +367,19 @@ void Server::handleMessage(cMessage *msg)
   break;
   case RPC_CLIENT_COMMAND:
   {
-    // TODO: Split in read and write case
     RPCClientCommandPacket *pk = check_and_cast<RPCClientCommandPacket *>(pkGeneric);
-    if(status == LEADER){ //Process incoming command from a client
+    //Process incoming command from a client
+    if(status == LEADER){ 
+      // If command already executed
+      if(latestSequenceNumber == pk->getSequenceNumber()){
+        clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
+        clientCommandResponseRPC->setSequenceNumber(latestSequenceNumber);
+        requestVoteResponseRPC->setValue(latestResponseToClient); // If it was not a read, it is not a problem, the client simply would ignore this field by himself which has no meaning
+        clientCommandResponseRPC->setSrcAddress(myAddress);
+        clientCommandResponseRPC->setDestAddress(clientAddress);
+        send(clientCommandResponseRPC, "port$o");
+        break;
+      }
       log_entry newEntry;
       if(pk->getType() == 1){
         newEntry.var = pk->getVar();
@@ -373,15 +391,18 @@ void Server::handleMessage(cMessage *msg)
       newEntry.term = currentTerm;
       newEntry.logIndex = log.size();
       log.push_back(newEntry);
-      seqNum = pk->getSequenceNumber(); // Save the sequence number to reply to the client
+      latestSequenceNumber = pk->getSequenceNumber(); // Save the sequence number to reply to the client
       cancelEvent(sendHearthbeat);
       appendNewEntry(newEntry);
       scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
     }
-    else{ //Forward to leader
-      pk->setDestAddress(leaderAddress);
-      RPCClientCommandPacket *pkCopy = pk->dup();
-      send(pkCopy, "port$o");
+    else{ //TODO!! rispondere al client chi è il Leader che conosce
+      clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE)
+      clientCommandResponseRPC->setRedirect(true);
+      clientCommandResponseRPC->setLastKnownLeader(leaderAddress); //che succede se all'inizio mando a un id che non esiste ad esempio?
+      clientCommandResponseRPC->setSrcAddr(myAddress);
+      clientCommandResponseRPC->setDestAddr(clientAddress);
+      send(clientCommandResponseRPC, "port$o"); 
     }
   }
   break;
