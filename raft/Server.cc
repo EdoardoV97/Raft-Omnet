@@ -37,6 +37,7 @@ class Server : public cSimpleModule
     RPCRequestVoteResponsePacket *requestVoteResponseRPC = nullptr;
     RPCInstallSnapshotPacket *installSnapshotRPC = nullptr;
     RPCClientCommandResponsePacket *clientCommandResponseRPC = nullptr;
+    RPCAckPacket *ACK;
 
     // State Machine of the server
     int x = 0;
@@ -71,6 +72,7 @@ class Server : public cSimpleModule
     void updateTerm(RPCPacket *pkGeneric);
     int getClientIndex(int clientAddress);
     void updateLatestClientSequenceNumber(int clientAddress, int sequenceNumber);
+    void sendAck(int destAddress);
 };
 
 Define_Module(Server);
@@ -242,7 +244,6 @@ void Server::handleMessage(cMessage *msg)
           if (status == FOLLOWER){
           cancelEvent(electionTimeoutEvent);
           leaderAddress = pk->getLeaderId();
-
           if(pk->getLeaderCommit() > commitIndex){
             if(pk->getLeaderCommit() < pk->getEntry().logIndex){
               commitIndex = pk->getLeaderCommit();
@@ -250,6 +251,7 @@ void Server::handleMessage(cMessage *msg)
               commitIndex = pk->getEntry().logIndex;
               }
           }
+          sendAck(pk->getSrcAddress());
           scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
          }
         }
@@ -659,4 +661,11 @@ void Server::updateLatestClientSequenceNumber(int clientAddress, int sequenceNum
    }
  }
  return;
+}
+
+void Server::sendAck(int destAddress){
+  ACK = new RPCAckPacket("RPC_ACK", RPC_ACK);
+  ACK->setSrcAddress(myAddress);
+  ACK->setDestAddress(destAddress);
+  send(ACK, "port$o"); 
 }

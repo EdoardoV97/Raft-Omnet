@@ -15,6 +15,7 @@ enum RPCPacketType
     RPC_CLIENT_COMMAND_RESPONSE = 6;
     RPC_CONFIG_CHANGED = 7;
     RPC_NEW_CONFIG_COMMITTED = 8;
+    RPC_ACK = 9;
 };
 
 packet RPCPacket
@@ -86,3 +87,5 @@ packet RPCconfigChangedPacket extends RPCPacket
 
 packet RPCnewConfigurationCommitted extends RPCPacket
 {};
+
+packet RPCAckPacket extends RPCPacket{};
