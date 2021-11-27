@@ -338,7 +338,7 @@ void Server::handleMessage(cMessage *msg)
           //Send response to the client
           clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
           if(log[lastApplied].value == -2){ //If it is a no_op entry
-            requestVoteResponseRPC->setValue(x);
+            clientCommandResponseRPC->setValue(x);
             latestResponseToClient = x;
           }
           clientCommandResponseRPC->setSequenceNumber(latestSequenceNumber);
@@ -374,7 +374,7 @@ void Server::handleMessage(cMessage *msg)
       if(latestSequenceNumber == pk->getSequenceNumber()){
         clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
         clientCommandResponseRPC->setSequenceNumber(latestSequenceNumber);
-        requestVoteResponseRPC->setValue(latestResponseToClient); // If it was not a read, it is not a problem, the client simply would ignore this field by himself which has no meaning
+        clientCommandResponseRPC->setValue(latestResponseToClient); // If it was not a read, it is not a problem, the client simply would ignore this field by himself which has no meaning
         clientCommandResponseRPC->setSrcAddress(myAddress);
         clientCommandResponseRPC->setDestAddress(clientAddress);
         send(clientCommandResponseRPC, "port$o");
@@ -397,11 +397,11 @@ void Server::handleMessage(cMessage *msg)
       scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
     }
     else{ //TODO!! rispondere al client chi è il Leader che conosce
-      clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE)
+      clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
       clientCommandResponseRPC->setRedirect(true);
       clientCommandResponseRPC->setLastKnownLeader(leaderAddress); //che succede se all'inizio mando a un id che non esiste ad esempio?
-      clientCommandResponseRPC->setSrcAddr(myAddress);
-      clientCommandResponseRPC->setDestAddr(clientAddress);
+      clientCommandResponseRPC->setSrcAddress(myAddress);
+      clientCommandResponseRPC->setDestAddress(clientAddress);
       send(clientCommandResponseRPC, "port$o"); 
     }
   }
