@@ -3,13 +3,21 @@
 using std::vector;
 using namespace omnetpp;
 
+struct latest_client_response
+{
+    int clientAddress;
+    int latestSequenceNumber;
+    int latestReponseToClient;
+};
+
 struct log_entry
 {
-    char var; // only 1 var
+    char var; // only 1 var for the state machine 'x'
     int value;
     int term;
     int logIndex;
     vector<int> configuration;
+    vector<latest_client_response> clientsData;
 };
 
 struct append_entry_timer

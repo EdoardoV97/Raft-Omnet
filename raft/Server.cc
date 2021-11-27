@@ -12,6 +12,9 @@ class Server : public cSimpleModule
   public: 
     virtual ~Server();
   private:
+    const int READ = 0;
+    const int WRITE = 1;
+
     serverState status = FOLLOWER;
     
     cMessage *sendHearthbeat;
@@ -22,12 +25,10 @@ class Server : public cSimpleModule
     int receiverAddress; // This is receiver server ID
     
     int votes = 0; // This is the number of received votes (meaninful when status = candidate)
-    int leaderAddress; // This is the leader ID
+    int leaderAddress = -1; // This is the leader ID
 
     int adminAddress;  // This is the admin address ID
-    int clientAddress; // This is the client ID
-    int latestSequenceNumber; // This is the last client's message sequence number.
-    int latestResponseToClient; // This is the latest response sent to the client (meaningfull only if READ, and in this case represent the read "value" of the state machine, x)
+    vector<latest_client_response> latestClientResponses;
 
     // Pointers to handle RPC mexs
     RPCAppendEntriesPacket *appendEntriesRPC = nullptr;
@@ -68,6 +69,8 @@ class Server : public cSimpleModule
     void becomeCandidate();
     void becomeFollower(RPCPacket *pkGeneric);
     void updateTerm(RPCPacket *pkGeneric);
+    int getClientIndex(int clientAddress);
+    void updateLatestClientSequenceNumber(int clientAddress, int sequenceNumber);
 };
 
 Define_Module(Server);
@@ -88,10 +91,11 @@ void Server::initialize()
 
   // Initialize addresses
   myAddress = gate("port$i")->getPreviousGate()->getId(); // Return index of this server gate port in the Switch
-  clientAddress = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 0)->getId();
+  // TODO: initialize client addresse at startup
+  //clientAddresses = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 0)->getId();
   adminAddress = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 1)->getId();
 
-  WATCH(clientAddress);
+  WATCH_VECTOR(clientAddresses);
   WATCH(adminAddress);
   WATCH(myAddress);
   WATCH_VECTOR(configuration);
@@ -334,17 +338,19 @@ void Server::handleMessage(cMessage *msg)
         for(int i=lastApplied; commitIndex > i; i++){
           lastApplied++;
           applyCommand(log[lastApplied]);
-          
-          //Send response to the client TODO: check better READ...probably not ok
-          clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
-          if(log[lastApplied].value == -2){ //If it is a no_op entry
-            clientCommandResponseRPC->setValue(x);
-            latestResponseToClient = x;
-          }
+
+          if(log[lastApplied].term == currentTerm){
+            clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
+            if(log[lastApplied].clientsData.latestResponseToClient == -1){ // -1=read
+              //TODO heartbeat exchange
+              clientCommandResponseRPC->setValue(x);
+              latestResponseToClient = x;
+            }
           clientCommandResponseRPC->setSequenceNumber(latestSequenceNumber);
           clientCommandResponseRPC->setSrcAddress(myAddress);
-          clientCommandResponseRPC->setDestAddress(clientAddress);
+          clientCommandResponseRPC->setDestAddress(clientAddresses);
           send(clientCommandResponseRPC, "port$o");
+          }
         }
       }
     }
@@ -371,27 +377,36 @@ void Server::handleMessage(cMessage *msg)
     //Process incoming command from a client
     if(status == LEADER){ 
       // If command already executed
-      if(latestSequenceNumber == pk->getSequenceNumber()){
-        clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
-        clientCommandResponseRPC->setSequenceNumber(latestSequenceNumber);
-        clientCommandResponseRPC->setValue(latestResponseToClient); // If it was not a read, it is not a problem, the client simply would ignore this field by himself which has no meaning
-        clientCommandResponseRPC->setSrcAddress(myAddress);
-        clientCommandResponseRPC->setDestAddress(clientAddress);
-        send(clientCommandResponseRPC, "port$o");
-        break;
+      for(int i=0; i < latestClientResponses.size(); i++){
+        if(latestClientResponses[i].clientAddress == pk->getSrcAddress() && latestClientResponses[i].latestSequenceNumber == pk->getSequenceNumber()){
+          clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
+          clientCommandResponseRPC->setSequenceNumber(latestClientResponses[i].latestSequenceNumber);
+          clientCommandResponseRPC->setValue(latestClientResponses[i].latestReponseToClient); // If it was not a read, it is not a problem, the client simply would ignore this field by himself which has no meaning
+          clientCommandResponseRPC->setSrcAddress(myAddress);
+          clientCommandResponseRPC->setDestAddress(latestClientResponses[i].clientAddress);
+          send(clientCommandResponseRPC, "port$o");
+          break;
+        }
       }
+      if(getClientIndex(pk->getSrcAddress()) == -1){
+        latest_client_response temp;
+        temp.clientAddress = pk->getSrcAddress();
+        latestClientResponses.push_back(temp);
+      }
+      updateLatestClientSequenceNumber(pk->getSrcAddress(), pk->getSequenceNumber);
       log_entry newEntry;
-      if(pk->getType() == 1){
-        newEntry.var = pk->getVar();
-        newEntry.value = pk->getValue();
-      }
-      else{
-        newEntry.value = -2; // Convention for no-op entry
-      }
       newEntry.term = currentTerm;
       newEntry.logIndex = log.size();
+      if(pk->getType() == WRITE){
+        newEntry.var = pk->getVar();
+        newEntry.value = pk->getValue();
+        latestClientResponses[getClientIndex(pk->getSrcAddress())].latestReponseToClient = 0;
+      }
+      else{
+        latestClientResponses[getClientIndex(pk->getSrcAddress())].latestReponseToClient = -1;
+      }
+      newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
       log.push_back(newEntry);
-      latestSequenceNumber = pk->getSequenceNumber(); // Save the sequence number to reply to the client
       cancelEvent(sendHearthbeat);
       appendNewEntry(newEntry);
       scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
@@ -399,9 +414,9 @@ void Server::handleMessage(cMessage *msg)
     else{ //Redirect the client to the last known leader
       clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
       clientCommandResponseRPC->setRedirect(true);
-      clientCommandResponseRPC->setLastKnownLeader(leaderAddress); //che succede se all'inizio mando a un id che non esiste ad esempio?
+      clientCommandResponseRPC->setLastKnownLeader(leaderAddress); //the client will check if it is -1; thus no Leader because startup of the cluster
       clientCommandResponseRPC->setSrcAddress(myAddress);
-      clientCommandResponseRPC->setDestAddress(clientAddress);
+      clientCommandResponseRPC->setDestAddress(pk->getSrcAddress());
       send(clientCommandResponseRPC, "port$o"); 
     }
   }
@@ -428,20 +443,22 @@ void Server::appendNewEntry(log_entry newEntry){
   
   //Send to all followers in the configuration
   for (int i = 0; i < configuration.size(); i++){
-    append_entry_timer newTimer;
-    newTimer.destination = configuration[i];
-    newTimer.prevLogIndex = log.back().logIndex;
-    newTimer.prevLogTerm = log.back().term;
-    newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
-    newTimer.entry = newEntry; // Should be sufficient to copy var, value, term, logIndex
-    newTimer.entry.configuration.assign(newEntry.configuration.begin(), newEntry.configuration.end()); // copy by value ("deep copy")
-    
-    appendEntriesRPC->setDestAddress(configuration[i]);
-    send(appendEntriesRPC, "port$o");
-    
-    appendEntryTimers.push_back(newTimer);
-    // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
-    scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
+    if(configuration[i] != myAddress){
+      append_entry_timer newTimer;
+      newTimer.destination = configuration[i];
+      newTimer.prevLogIndex = log.back().logIndex;
+      newTimer.prevLogTerm = log.back().term;
+      newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
+      newTimer.entry = newEntry; // Should be sufficient to copy var, value, term, logIndex
+      newTimer.entry.configuration.assign(newEntry.configuration.begin(), newEntry.configuration.end()); // copy by value ("deep copy")
+      
+      appendEntriesRPC->setDestAddress(configuration[i]);
+      send(appendEntriesRPC, "port$o");
+      
+      appendEntryTimers.push_back(newTimer);
+      // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
+      scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
+    }
   }
   return;
 }
@@ -496,6 +513,7 @@ bool Server::majority(int N){
 }
 
 void Server::applyCommand(log_entry entry){
+  latestClientResponses.assign(entry.clientsData.begin(), entry.clientsData.end());
   if(entry.value == -2){ //no_op entry
     return;
   }
@@ -582,7 +600,15 @@ void Server::becomeLeader(){
   matchIndex.clear();
   nextIndex.resize(configuration.size(), log.back().logIndex + 1);
   matchIndex.resize(configuration.size(), 0);
-  scheduleAt(simTime(), sendHearthbeat); // Trigger istantaneously the sendHeartbeat
+
+  log_entry newEntry;
+  newEntry.term = currentTerm;
+  newEntry.logIndex = log.size();
+  newEntry.var = 'N';
+  newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
+  appendNewEntry(newEntry);
+
+  scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); // Trigger istantaneously the sendHeartbeat
 }
 
 void Server::becomeFollower(RPCPacket *pkGeneric){
@@ -614,4 +640,23 @@ void Server::initializeConfiguration(){
           configuration.push_back(moduleAddress);
         }
     }
+}
+
+int Server::getClientIndex(int clientAddress){
+  for(int i=0; i<clientsData.size(); i++){
+    if(clientAddress == clientsData[i].clientAddress){
+    return i;
+    }
+  }
+  return -1;
+}
+
+void Server::updateLatestClientSequenceNumber(int clientAddress, int sequenceNumber){
+ for(int i=0; i<clientsData.size(); i++){
+   if(latestClientResponses[i].clientAddress == clientAddress){
+     latestClientResponses[i].latestSequenceNumber = sequenceNumber;
+     return;
+   }
+ }
+ return;
 }
