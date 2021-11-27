@@ -26,6 +26,7 @@ class Server : public cSimpleModule
     
     int votes = 0; // This is the number of received votes (meaninful when status = candidate)
     int leaderAddress = -1; // This is the leader ID
+    int acks = 0; // This is the number of acks 
 
     int adminAddress;  // This is the admin address ID
     vector<latest_client_response> latestClientResponses;
@@ -341,17 +342,17 @@ void Server::handleMessage(cMessage *msg)
           lastApplied++;
           applyCommand(log[lastApplied]);
 
-          if(log[lastApplied].term == currentTerm){
-            clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
-            if(log[lastApplied].clientsData.latestResponseToClient == -1){ // -1=read
-              //TODO heartbeat exchange
-              clientCommandResponseRPC->setValue(x);
-              latestResponseToClient = x;
-            }
-          clientCommandResponseRPC->setSequenceNumber(latestSequenceNumber);
-          clientCommandResponseRPC->setSrcAddress(myAddress);
-          clientCommandResponseRPC->setDestAddress(clientAddresses);
-          send(clientCommandResponseRPC, "port$o");
+          // if(log[lastApplied].term == currentTerm){
+          //   clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
+          //   if(log[lastApplied].clientsData.latestResponseToClient == -1){ // -1=read
+          //     //TODO heartbeat exchange
+          //     clientCommandResponseRPC->setValue(x);
+          //     latestResponseToClient = x;
+          //   }
+          // clientCommandResponseRPC->setSequenceNumber(latestSequenceNumber);
+          // clientCommandResponseRPC->setSrcAddress(myAddress);
+          // clientCommandResponseRPC->setDestAddress(clientAddresses);
+          // send(clientCommandResponseRPC, "port$o");
           }
         }
       }
@@ -423,6 +424,15 @@ void Server::handleMessage(cMessage *msg)
     }
   }
   break;
+  case RPC_ACK:
+  {
+    RPCAckPacket *pk = check_and_cast<RPCAckPacket *>(pkGeneric);
+    if(status == LEADER){
+      acks++;
+    }
+
+  }
+    break;
   default:
     break;
   }
@@ -626,6 +636,7 @@ void Server::becomeFollower(RPCPacket *pkGeneric){
   }
   votes = 0;
   votedFor = -1;
+  acks = 0;
   nextIndex.clear();
   matchIndex.clear();
   scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
