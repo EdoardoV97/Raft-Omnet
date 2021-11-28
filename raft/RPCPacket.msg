@@ -39,15 +39,17 @@ packet RPCClientCommandResponsePacket extends RPCPacket{
     bool redirect = false;
     int lastKnownLeader;
 }
-// NOTA: si possono specificare valori di default!
+
 packet RPCAppendEntriesPacket extends RPCPacket
 {
     int term;                           // leader's term
     int leaderId;                       // leader identifier so follower can redirect clients --> index of leader gate port in the Switch
     int prevLogIndex;                   // index of log entry immediately preceding new ones          
     int prevLogTerm;                    // term of prevLogIndex entry
-    log_entry entry;                  // log entries to store (empty for heartbeat);
+    log_entry entry;                    // log entries to store (empty for heartbeat);
     int leaderCommit;                   // leader’s commitIndex
+    int heartbeatSeqNum;                //for optional heartbeat with sequence number (for read-only interaction)
+    clients_data clientsData;
 };
 
 
@@ -88,4 +90,6 @@ packet RPCconfigChangedPacket extends RPCPacket
 packet RPCnewConfigurationCommitted extends RPCPacket
 {};
 
-packet RPCAckPacket extends RPCPacket{};
+packet RPCAckPacket extends RPCPacket{
+    int sequenceNumber;
+};
