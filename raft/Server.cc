@@ -139,12 +139,16 @@ void Server::handleMessage(cMessage *msg)
     EV << "Sending hearthbeat to followers\n";
     log_entry emptyEntry;
     emptyEntry.term = -1; //convention to explicit heartbeat 
+    clients_data temp;
+    temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
+
 
     appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
     appendEntriesRPC->setTerm(currentTerm);
     appendEntriesRPC->setLeaderId(myAddress);
     appendEntriesRPC->setEntry(emptyEntry);
     appendEntriesRPC->setLeaderCommit(commitIndex);
+    appendEntriesRPC->setClientsData(temp);
     appendEntriesRPC->setSrcAddress(myAddress);
     appendEntriesRPC->setIsBroadcast(true);
     if(withAck == true){
@@ -178,6 +182,8 @@ void Server::handleMessage(cMessage *msg)
     if (msg == appendEntryTimers[i].timeoutEvent){
       log_entry newEntry = appendEntryTimers[i].entry;
       newEntry.configuration.assign(appendEntryTimers[i].entry.configuration.begin(), appendEntryTimers[i].entry.configuration.end());
+      clients_data temp;
+      temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
       //Resend the message
       appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
       appendEntriesRPC->setTerm(currentTerm);
@@ -186,6 +192,7 @@ void Server::handleMessage(cMessage *msg)
       appendEntriesRPC->setPrevLogTerm(appendEntryTimers[i].prevLogTerm);
       appendEntriesRPC->setEntry(newEntry);
       appendEntriesRPC->setLeaderCommit(commitIndex);
+      appendEntriesRPC->setClientsData(temp);
       appendEntriesRPC->setSrcAddress(myAddress);
       appendEntriesRPC->setIsBroadcast(false);
       appendEntriesRPC->setDestAddress(appendEntryTimers[i].destination);
@@ -235,6 +242,7 @@ void Server::handleMessage(cMessage *msg)
             commitIndex = pk->getEntry().logIndex;
           }
         }
+        latestClientResponses.assign(pk->getClientsData().responses.begin(), pk->getClientsData().responses.end());
         //Reply true
         appendEntriesResponseRPC = new RPCAppendEntriesResponsePacket("RPC_APPEND_ENTRIES_RESPONSE", RPC_APPEND_ENTRIES_RESPONSE);
         appendEntriesResponseRPC->setSuccess(true);
@@ -267,6 +275,7 @@ void Server::handleMessage(cMessage *msg)
           if(pk->getHeartbeatSeqNum() != -1){
             sendAck(pk->getSrcAddress(), pk->getHeartbeatSeqNum());
           }
+          latestClientResponses.assign(pk->getClientsData().responses.begin(), pk->getClientsData().responses.end());
           scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
          }
         }
@@ -391,7 +400,7 @@ void Server::handleMessage(cMessage *msg)
     RPCClientCommandPacket *pk = check_and_cast<RPCClientCommandPacket *>(pkGeneric);
     //Process incoming command from a client
     if(status == LEADER){ 
-      // If command already executed
+      // If request already served
       for(int i=0; i < latestClientResponses.size(); i++){
         if(latestClientResponses[i].clientAddress == pk->getSrcAddress() && latestClientResponses[i].latestSequenceNumber == pk->getSequenceNumber()){
           clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
@@ -481,7 +490,9 @@ void Server::handleMessage(cMessage *msg)
 }
 
 void Server::appendNewEntry(log_entry newEntry){
-  
+  clients_data temp;
+  temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
+
   appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
   appendEntriesRPC->setTerm(currentTerm);
   appendEntriesRPC->setLeaderId(myAddress);
@@ -489,6 +500,7 @@ void Server::appendNewEntry(log_entry newEntry){
   appendEntriesRPC->setPrevLogTerm(log.back().term); 
   appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
+  appendEntriesRPC->setClientsData(temp);
   appendEntriesRPC->setSrcAddress(myAddress);
   appendEntriesRPC->setIsBroadcast(false);
   
@@ -515,7 +527,9 @@ void Server::appendNewEntry(log_entry newEntry){
 }
 
 void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
-  
+  clients_data temp;
+  temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
+
   appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
   appendEntriesRPC->setTerm(currentTerm);
   appendEntriesRPC->setLeaderId(myAddress);
@@ -523,6 +537,7 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   appendEntriesRPC->setPrevLogTerm(log[nextIndex[index]-1].term);
   appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
+  appendEntriesRPC->setClientsData(temp);
   appendEntriesRPC->setSrcAddress(myAddress);
   appendEntriesRPC->setIsBroadcast(false);
 
@@ -725,16 +740,16 @@ void Server::sendResponseToClient(int type, int clientAddress){
   clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
   if(type == READ){
     clientCommandResponseRPC->setValue(x);
+    latestClientResponses[getClientIndex(pendingReadClients[i])].latestResponse = x;
   }else{
     clientCommandResponseRPC->setValue(-1); // Convention for write responses
+    latestClientResponses[getClientIndex(pendingReadClients[i])].latestResponse = -1;
   }
-  clientCommandResponseRPC->setSequenceNumber(latestClientResponses[getClientIndex(clientAddress)].latestSequenceNumber);
+  clientCommandResponseRPC->setSequenceNumber(latestClientResponses[getClientIndex(clientAddress)].latestSequenceNumber + 1);
   clientCommandResponseRPC->setSrcAddress(myAddress);
   clientCommandResponseRPC->setDestAddress(clientAddress);
   send(clientCommandResponseRPC, "port$o");
-  
   latestClientResponses[getClientIndex(pendingReadClients[i])].latestSequenceNumber++;
-  latestClientResponses[getClientIndex(pendingReadClients[i])].latestResponse = x;
 }
 
 void Server::startReadOnlyLeaderCheck(){
