@@ -14,6 +14,7 @@ Define_Module(Admin);
 Admin::~Admin()
 {
   cancelAndDelete(changeConfig);
+  cancelAndDelete(resendTimer);
 }
 
 void Admin::initialize()
@@ -28,6 +29,7 @@ void Admin::initialize()
 
     // Create the self mexs
     changeConfig = new cMessage("changeConfig");
+    resendTimer = new cMessage("resendTimer");
 
     WATCH(myAddress);
     WATCH_VECTOR(configuration);
@@ -79,20 +81,31 @@ void Admin::handleMessage(cMessage *msg)
             // 3) Now we can inform the clients of the change, and the cluster, knowing that only leader will keep this mex
             //    Note that clients will still try to send mex to servers in toPurge vector, since these servers will be effectively
             //    purged only at step 4)
-            sendChangeConfig();
+            sequenceNumber++;
+            sendChangeConfig(false);
         }
         return;
+    }
+    else{
+      // Resend timeout case
+      sendChangeConfig(true);
+      return;
     }
 
     // 4) The leader has committed the new configuration, so old servers can be shutted down
     // ASSUMPTION: The mex sent by leader to Admin is never lost! We consider this as an internal mex exchange
     RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
-    if (pk->getKind() == RPC_NEW_CONFIG_COMMITTED){
-      deleteServer();
-      bubble("Shutting down old servers");
-      toPurge.clear();
-      delete pk;
+    if (pk->getKind() == RPC_CLIENT_COMMAND_RESPONSE){
+      // If sequence number is correct
+      RPCClientCommandResponsePacket *response = check_and_cast<RPCClientCommandResponsePacket *>(msg);
+      if(sequenceNumber == response->getSequenceNumber()){
+        cancelEvent(resendTimer);
+        deleteServer();
+        bubble("Shutting down old servers");
+        toPurge.clear();
+      }
     }
+    delete pk;
 }
 
 
@@ -159,14 +172,36 @@ void Admin::updateConfiguration()
 }
 
 
-void Admin::sendChangeConfig(){
+void Admin::sendChangeConfig(bool onlyServer){
   // This mex need to be send to all: both cluster's servers and clients
   for (int i=1; i < Switch->gateSize("port$o"); i++){
     if (Switch->gate("port$o", i)->isConnected()){
-      configChangedRPC = new RPCconfigChangedPacket("RPC_CONFIG_CHANGED", RPC_CONFIG_CHANGED);
-      configChangedRPC->setSrcAddress(myAddress);
-      configChangedRPC->setDestAddress(Switch->gate("port$o", i)->getId());
-      send(configChangedRPC, "port$o");
+      if(onlyServer == true){
+        std::string serverString = "server";
+        std::string moduleCheck = Switch->gate("port$o", i)->getNextGate()->getOwnerModule()->getFullName();
+        if(moduleCheck.find(serverString) != std::string::npos){
+          cluster_configuration newConfig;
+          newConfig.servers.assign(configuration.begin(), configuration.end());
+          configChangedRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
+          configChangedRPC->setSrcAddress(myAddress);
+          configChangedRPC->setDestAddress(Switch->gate("port$o", i)->getId());
+          configChangedRPC->setClusterConfig(newConfig);
+          configChangedRPC->setSequenceNumber(sequenceNumber);
+          send(configChangedRPC, "port$o");
+        }
+      }
+      else{
+        cluster_configuration newConfig;
+        newConfig.servers.assign(configuration.begin(), configuration.end());
+        configChangedRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
+        configChangedRPC->setSrcAddress(myAddress);
+        configChangedRPC->setDestAddress(Switch->gate("port$o", i)->getId());
+        configChangedRPC->setClusterConfig(newConfig);
+        configChangedRPC->setSequenceNumber(sequenceNumber);
+        send(configChangedRPC, "port$o");
+      }
     }
   }
+  scheduleAt(simTime() + par("resendTimer"), resendTimer);
+  return;
 }

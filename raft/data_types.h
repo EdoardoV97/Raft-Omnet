@@ -15,6 +15,11 @@ struct clients_data
     vector<latest_client_response> responses;
 };
 
+struct cluster_configuration
+{
+    vector<int> servers;
+};
+
 
 struct log_entry
 {

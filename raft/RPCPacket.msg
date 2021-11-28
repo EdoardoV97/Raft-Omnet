@@ -4,6 +4,7 @@ cplusplus {{
 
 struct log_entry;
 struct clients_data;
+struct cluster_configuration;
 
 enum RPCPacketType
 {
@@ -14,9 +15,7 @@ enum RPCPacketType
     RPC_REQUEST_VOTE_RESPONSE = 4;
     RPC_CLIENT_COMMAND = 5;
     RPC_CLIENT_COMMAND_RESPONSE = 6;
-    RPC_CONFIG_CHANGED = 7;
-    RPC_NEW_CONFIG_COMMITTED = 8;
-    RPC_ACK = 9;
+    RPC_ACK = 7;
 };
 
 packet RPCPacket
@@ -29,9 +28,10 @@ packet RPCPacket
 packet RPCClientCommandPacket extends RPCPacket{
     char var;
     int value;
-    // Convention: READ = 0, WRITE = 1;
+    // Convention: READ = 0, WRITE = 1; 
     int type;
     int sequenceNumber;
+    cluster_configuration clusterConfig;
 }
 
 packet RPCClientCommandResponsePacket extends RPCPacket{
@@ -83,10 +83,7 @@ packet RPCInstallSnapshotPacket extends RPCPacket
 
 
 packet RPCconfigChangedPacket extends RPCPacket
-{
-    // TODO: add the config vector in the RPCconfigChangedPacket
-    string payload;
-};
+{};
 
 packet RPCnewConfigurationCommitted extends RPCPacket
 {};

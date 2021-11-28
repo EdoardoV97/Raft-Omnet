@@ -19,22 +19,24 @@ class Admin : public cSimpleModule
     int numberOfNewServers, numberOfServersToRemove;
     int numberOfserversToRemove;
 
+    int sequenceNumber = 0;
+
     // Servers to purge
     vector<int> toPurge;
     cModule *Switch, *serverToPurge;
 
-    cMessage *changeConfig;
+    cMessage *changeConfig, *resendTimer;
     cGate *newServerPortIN, *newServerPortOUT;
     cGate *newSwitchPortIN, *newSwitchPortOUT;
 
     // RPC messages
-    RPCconfigChangedPacket *configChangedRPC;
+    RPCClientCommandPacket *configChangedRPC;
 
     // Methods
     void createNewServer(int index);
     void deleteServer();
     void updateConfiguration();
-    void sendChangeConfig();
+    void sendChangeConfig(bool onlyServer);
   protected: 
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;

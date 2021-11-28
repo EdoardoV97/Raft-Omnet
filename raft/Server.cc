@@ -101,9 +101,7 @@ void Server::initialize()
 
   // Initialize addresses
   myAddress = gate("port$i")->getPreviousGate()->getId(); // Return index of this server gate port in the Switch
-  // TODO: initialize client addresse at startup
-  //clientAddresses = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 0)->getId();
-  adminAddress = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 1)->getId();
+  adminAddress = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 0)->getId();
 
   WATCH(adminAddress);
   WATCH(myAddress);

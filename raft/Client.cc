@@ -1,6 +1,5 @@
 #include "RPCPacket_m.h"
 #include <algorithm>
-#include "Admin.h"
 
 using namespace omnetpp;
 using std::vector;
@@ -23,7 +22,6 @@ class Client : public cSimpleModule
       // To identify each client request
       int sequenceNumber = 0;
     
-      cModule *Admin;
       cMessage *sendWrite, *sendRead, *requestTimeoutRead, *requestTimeoutWrite;
       RPCClientCommandPacket *clientCommandRPC;
       // Convention: READ = 0, WRITE = 1;
@@ -38,7 +36,6 @@ class Client : public cSimpleModule
       virtual void initialize() override;
       virtual void handleMessage(cMessage *msg) override;
       void chooseNextRandomOp();
-      void updateConfiguration();
       int chooseRandomServer();
   };
 
@@ -55,7 +52,6 @@ Client::~Client()
 
 void Client::initialize(){
   myAddress = gate("port$i")->getPreviousGate()->getId();
-  Admin = gate("port$i")->getPreviousGate()->getOwnerModule()->gate("port$o", 0)->getOwnerModule();
 
   WATCH_VECTOR(configuration);
   WATCH(myAddress);
@@ -108,9 +104,10 @@ void Client::handleMessage(cMessage *msg){
 
 
   RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
-  if (pk->getKind() == RPC_CONFIG_CHANGED){
+  if (pk->getKind() == RPC_CLIENT_COMMAND){
     // Update config in response to Admin mex
-    updateConfiguration();
+    RPCClientCommandPacket *response = check_and_cast<RPCClientCommandPacket *>(pk);
+    configuration.assign(response->getClusterConfig().servers.begin(), response->getClusterConfig().servers.end());
   }
   else if (pk->getKind() == RPC_CLIENT_COMMAND_RESPONSE){
     RPCClientCommandResponsePacket *response = check_and_cast<RPCClientCommandResponsePacket *>(pk);
@@ -129,18 +126,24 @@ void Client::handleMessage(cMessage *msg){
     else{
       // I have received a valid response
       // Print value received back if it is a read?
-      if (lastOperation == READ){
-        EV << "READ Request SUCCESS! Received response back for request with SN = " << response->getSequenceNumber() << "  from: " << response->getSrcAddress();
-        EV << "Value read is x = " << response->getValue();
+      if(sequenceNumber == response->getSequenceNumber())
+      {
+        if (lastOperation == READ){
+          EV << "READ Request SUCCESS! Received response back for request with SN = " << response->getSequenceNumber() << "  from: " << response->getSrcAddress();
+          EV << "Value read is x = " << response->getValue();
+        }
+        else{
+          EV << "WRITE Request SUCCESS! Received response back for request with SN = " << response->getSequenceNumber() << "  from: " << response->getSrcAddress();
+        }
+        //Now client can issue another request
+        cancelEvent(requestTimeoutRead);
+        cancelEvent(requestTimeoutWrite);
+        chooseNextRandomOp();
       }
       else{
-        EV << "WRITE Request SUCCESS! Received response back for request with SN = " << response->getSequenceNumber() << "  from: " << response->getSrcAddress();
+        EV << "Received response back for request with old SN = " << response->getSequenceNumber();
       }
-      //Now client can issue another request
-      chooseNextRandomOp();
     }
-    cancelEvent(requestTimeoutRead);
-    cancelEvent(requestTimeoutWrite);
   }
   delete pk;
 }
@@ -166,11 +169,4 @@ void Client::chooseNextRandomOp(){
 int Client::chooseRandomServer(){
   int randomServer = intrand(configuration.size());
   return configuration[randomServer];
-}
-
-void Client::updateConfiguration(){
-    class Admin *admin = check_and_cast<class Admin *>(Admin);
-
-    configuration.clear();
-    configuration.assign(admin->configuration.begin(), admin->configuration.end());
 }
