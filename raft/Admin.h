@@ -34,6 +34,7 @@ class Admin : public cSimpleModule
     void createNewServer(int index);
     void deleteServer();
     void updateConfiguration();
+    void sendChangeConfig();
   protected: 
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;

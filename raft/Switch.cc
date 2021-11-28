@@ -39,13 +39,19 @@ void Switch::activity()
         // Send in broadcast
         int source = pk->getSrcAddress();
         if (pk->getIsBroadcast() == true){
-            EV << "Relaying msg received in broadcast\n";
-            for (int i = 2; i < gateSize("port$o"); i++){
-                if (gate("port$o", i)->isConnected())
-                {
-                    if (gate("port$o", i)->getId() != source){
-                            pk_copy = pk->dup();
-                            send(pk_copy, "port$o", i);
+            EV << "Relaying msg received in broadcast to the Cluster\n";
+            for (int i = 1; i < gateSize("port$o"); i++){
+                if (gate("port$o", i)->isConnected()){
+                    std::string serverString = "server";
+                    std::string moduleCheck = gate("port$o", i)->getNextGate()->getOwnerModule()->getFullName();
+                    // We need to check if receiver is a server, otherwise don't send
+                    if (moduleCheck.find(serverString) != std::string::npos)
+                    {
+                        // Check that receiver isn't the sender himself
+                        if (gate("port$o", i)->getId() != source){
+                                pk_copy = pk->dup();
+                                send(pk_copy, "port$o", i);
+                        }
                     }
                 }
             }
@@ -55,7 +61,6 @@ void Switch::activity()
         else{
             destAddress = pk->getDestAddress();
             const char* destName = gate(destAddress)->getNextGate()->getOwnerModule()->getFullName();
-            // TODO aggiungere nome del ricevente del messaggio al posto di destAddress
             EV << "Relaying msg received to " << destName << "  (addr = " << destAddress << ")\n";
             send(msg, destAddress);
         }

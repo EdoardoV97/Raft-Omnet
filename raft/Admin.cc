@@ -16,66 +16,6 @@ Admin::~Admin()
   cancelAndDelete(changeConfig);
 }
 
-
-void Admin::createNewServer(int index)
-{
-    cModuleType *moduleType = cModuleType::get("Server");
-    string i = to_string(index);
-    string temp = "server[" + i + "]";
-    const char *name = temp.c_str();
-    cModule *module = moduleType->create(name, getSystemModule());
-
-    cDelayChannel *delayChannelIN = cDelayChannel::create("DelayChannel");
-    cDelayChannel *delayChannelOUT = cDelayChannel::create("DelayChannel");
-    delayChannelIN->setDelay(0.01);
-    delayChannelOUT->setDelay(0.01);
-    newServerPortIN = module->gate("port$i");
-    newServerPortOUT = module->gate("port$o");
-    newSwitchPortOUT->connectTo(newServerPortIN, delayChannelIN);
-    newServerPortOUT->connectTo(newSwitchPortIN, delayChannelOUT);
-
-    // create internals, and schedule it
-    module->buildInside();
-    module->callInitialize();
-}
-
-
-void Admin::deleteServer()
-{
-  int serverID;
-  for (int i = 2; i < Switch->gateSize("port$o"); i++){
-      serverID = Switch->gate("port$o", i)->getId();
-      for (int k = 0; k < toPurge.size() ; k++){
-        if (serverID == toPurge[k]){
-          // Get the Server to purge and disconnect port from the switch
-          serverToPurge = Switch->gate("port$o", i)->getNextGate()->getOwnerModule();
-          serverToPurge->gate("port$o")->disconnect();
-          Switch->gate("port$o", i)->disconnect();
-            
-          // Delete the module
-          serverToPurge->callFinish();
-          serverToPurge->deleteModule();
-        }
-      }
-  }
-}
-
-
-void Admin::updateConfiguration()
-{
-    int moduleAddress;
-    configuration.clear();
-    for (int i = 2; i < Switch->gateSize("port$o"); i++){
-        if (Switch->gate("port$o", i)->isConnected())
-        {
-          moduleAddress = Switch->gate("port$o", i)->getId();
-          EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
-          configuration.push_back(moduleAddress);
-        }
-    }
-}
-
-
 void Admin::initialize()
 {
     // My address is the out port of the switch corresponding to the input port of this module
@@ -119,7 +59,6 @@ void Admin::handleMessage(cMessage *msg)
 
           // Repeat the add server procedure
           scheduleAt(simTime() + par("delay"), changeConfig);
-          return;
         }
         else if (numberOfNewServers == 0) {
             // We have added all the new servers, so update the config
@@ -128,23 +67,25 @@ void Admin::handleMessage(cMessage *msg)
 
             // 2) Now new servers has been added, so we can purge the ones we want to remove from config
             int oldConfigSize = configuration.size();
+            bubble("Removing old servers from config!");
             for(int i = 0; i < numberOfServersToRemove; i++){
               // Update the config again with server removed, being carefull to not delete new servers just added
-              bubble("Removing old servers from config!");
               int position = oldConfigSize - 1 - numberOfNewServers - i;
               int purgedAddress = configuration[position];
               toPurge.push_back(purgedAddress);
               EV << "Added ID: " << purgedAddress << " to toPurge Vector" << endl;
               configuration.erase(configuration.begin() + configuration.size() - 1 - numberOfNewServers);
             }
-            // 3) Now we can inform the cluster and the client of the change
-            //configChangedRPC = new RPCconfigChangedPacket("RPC_CONFIG_CHANGED", RPC_CONFIG_CHANGED);
-            //send(configChangedRPC, "port$o");
-            return;
+            // 3) Now we can inform the clients of the change, and the cluster, knowing that only leader will keep this mex
+            //    Note that clients will still try to send mex to servers in toPurge vector, since these servers will be effectively
+            //    purged only at step 4)
+            sendChangeConfig();
         }
+        return;
     }
 
     // 4) The leader has committed the new configuration, so old servers can be shutted down
+    // ASSUMPTION: The mex sent by leader to Admin is never lost! We consider this as an internal mex exchange
     RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
     if (pk->getKind() == RPC_NEW_CONFIG_COMMITTED){
       deleteServer();
@@ -152,4 +93,80 @@ void Admin::handleMessage(cMessage *msg)
       toPurge.clear();
       delete pk;
     }
+}
+
+
+void Admin::createNewServer(int index)
+{
+    cModuleType *moduleType = cModuleType::get("Server");
+    string i = to_string(index);
+    string temp = "server[" + i + "]";
+    const char *name = temp.c_str();
+    cModule *module = moduleType->create(name, getSystemModule());
+
+    cDelayChannel *delayChannelIN = cDelayChannel::create("DelayChannel");
+    cDelayChannel *delayChannelOUT = cDelayChannel::create("DelayChannel");
+    delayChannelIN->setDelay(0.01);
+    delayChannelOUT->setDelay(0.01);
+    newServerPortIN = module->gate("port$i");
+    newServerPortOUT = module->gate("port$o");
+    newSwitchPortOUT->connectTo(newServerPortIN, delayChannelIN);
+    newServerPortOUT->connectTo(newSwitchPortIN, delayChannelOUT);
+
+    // create internals, and schedule it
+    module->buildInside();
+    module->callInitialize();
+}
+
+
+void Admin::deleteServer()
+{
+  int serverID;
+  for (int i = 2; i < Switch->gateSize("port$o"); i++){
+      serverID = Switch->gate("port$o", i)->getId();
+      for (int k = 0; k < toPurge.size() ; k++){
+        if (serverID == toPurge[k]){
+          // Get the Server to purge and disconnect port from the switch
+          serverToPurge = Switch->gate("port$o", i)->getNextGate()->getOwnerModule();
+          serverToPurge->gate("port$o")->disconnect();
+          Switch->gate("port$o", i)->disconnect();
+            
+          // Delete the Server
+          serverToPurge->callFinish();
+          serverToPurge->deleteModule();
+        }
+      }
+  }
+}
+
+
+void Admin::updateConfiguration()
+{
+    int moduleAddress;
+    configuration.clear();
+    for (int i = 1; i < Switch->gateSize("port$o"); i++){
+        // TODO: Add check to avoid inserting clients
+        if (Switch->gate("port$o", i)->isConnected()){
+          std::string serverString = "server";
+          std::string moduleCheck = Switch->gate("port$o", i)->getNextGate()->getOwnerModule()->getFullName();
+          if(moduleCheck.find(serverString) != std::string::npos){
+            moduleAddress = Switch->gate("port$o", i)->getId();
+            EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
+            configuration.push_back(moduleAddress);
+          }
+        }
+    }
+}
+
+
+void Admin::sendChangeConfig(){
+  // This mex need to be send to all: both cluster's servers and clients
+  for (int i=1; i < Switch->gateSize("port$o"); i++){
+    if (Switch->gate("port$o", i)->isConnected()){
+      configChangedRPC = new RPCconfigChangedPacket("RPC_CONFIG_CHANGED", RPC_CONFIG_CHANGED);
+      configChangedRPC->setSrcAddress(myAddress);
+      configChangedRPC->setDestAddress(Switch->gate("port$o", i)->getId());
+      send(configChangedRPC, "port$o");
+    }
+  }
 }

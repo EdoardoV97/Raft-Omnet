@@ -29,14 +29,18 @@ class Client : public cSimpleModule
       // Convention: READ = 0, WRITE = 1;
       const int READ = 0;
       const int WRITE = 1;
+      // Last operation requested by this client
+      int lastOperation = -1;
+      // To know if client has been redirect to a known leader
+      bool isRedirect = false;
 
-      void chooseNextRandomOp();
-      void initializeConfiguration();
-      int chooseRandomServer();
     protected: 
-    virtual void initialize() override;
-    virtual void handleMessage(cMessage *msg) override;
-};
+      virtual void initialize() override;
+      virtual void handleMessage(cMessage *msg) override;
+      void chooseNextRandomOp();
+      void updateConfiguration();
+      int chooseRandomServer();
+  };
 
 Define_Module(Client);
 
@@ -51,12 +55,10 @@ Client::~Client()
 
 void Client::initialize(){
   myAddress = gate("port$i")->getPreviousGate()->getId();
-  Admin = (gate("port$i")->getPreviousGate()->getOwnerModule()->gate("port$o", 1)->getOwnerModule());
+  Admin = gate("port$i")->getPreviousGate()->getOwnerModule()->gate("port$o", 0)->getOwnerModule();
 
   WATCH_VECTOR(configuration);
   WATCH(myAddress);
-
-  initializeConfiguration();
 
   sendWrite = new cMessage("sendWrite");
   sendRead = new cMessage("sendRead");
@@ -69,7 +71,9 @@ void Client::initialize(){
 void Client::handleMessage(cMessage *msg){
 
   if (msg == sendRead){
-    receiverAddress = chooseRandomServer();
+    if (isRedirect == false){
+      receiverAddress = chooseRandomServer();
+    }
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
     clientCommandRPC->setSequenceNumber(sequenceNumber);
@@ -81,7 +85,9 @@ void Client::handleMessage(cMessage *msg){
     return;
   }
   else if (msg == sendWrite) {
-    receiverAddress = chooseRandomServer();
+    if (isRedirect == false){
+      receiverAddress = chooseRandomServer();
+    }
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
     clientCommandRPC->setSequenceNumber(sequenceNumber);
@@ -97,23 +103,44 @@ void Client::handleMessage(cMessage *msg){
   else if (msg == requestTimeoutRead)
     scheduleAt(simTime(), sendRead);
   else if (msg == requestTimeoutWrite)
-    scheduleAt(simTime(), sendRead);
+    scheduleAt(simTime(), sendWrite);
+
 
 
   RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
   if (pk->getKind() == RPC_CONFIG_CHANGED){
     // Update config in response to Admin mex
-    class Admin *admin = check_and_cast<class Admin *>(Admin);
-
-    configuration.clear();
-    configuration.assign(admin->configuration.begin(), admin->configuration.end());
+    updateConfiguration();
   }
   else if (pk->getKind() == RPC_CLIENT_COMMAND_RESPONSE){
+    RPCClientCommandResponsePacket *response = check_and_cast<RPCClientCommandResponsePacket *>(pk);
+
+    if (response->getRedirect() == true){
+      // If I have been redirect set the receiverAddress to LastKnownLeader, so to avoid pick a random server again
+      isRedirect = true;
+      receiverAddress = response->getLastKnownLeader();
+      if (lastOperation == READ){
+        scheduleAt(simTime(), sendRead);
+      }
+      else {
+        scheduleAt(simTime(), sendWrite);
+      }
+    }
+    else{
+      // I have received a valid response
+      // Print value received back if it is a read?
+      if (lastOperation == READ){
+        EV << "READ Request SUCCESS! Received response back for request with SN = " << response->getSequenceNumber() << "  from: " << response->getSrcAddress();
+        EV << "Value read is x = " << response->getValue();
+      }
+      else{
+        EV << "WRITE Request SUCCESS! Received response back for request with SN = " << response->getSequenceNumber() << "  from: " << response->getSrcAddress();
+      }
+      //Now client can issue another request
+      chooseNextRandomOp();
+    }
     cancelEvent(requestTimeoutRead);
     cancelEvent(requestTimeoutWrite);
-
-    // Print value received back if it is a read?
-    chooseNextRandomOp();
   }
   delete pk;
 }
@@ -123,14 +150,17 @@ void Client::chooseNextRandomOp(){
   sequenceNumber++;
 
   // Produce a random integer in the range [0,2)
-  //int randomOp = intrand(2);
-  int randomOp = 1;
-  if(randomOp == READ)
+  int randomOp = intrand(2);
+  if(randomOp == READ){
+    lastOperation = READ;
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendRead);
+  }
   else{
+    lastOperation = WRITE;
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendWrite);
     value++;
   }
+  isRedirect = false;
 }
 
 int Client::chooseRandomServer(){
@@ -138,15 +168,9 @@ int Client::chooseRandomServer(){
   return configuration[randomServer];
 }
 
-void Client::initializeConfiguration(){
-    cModule *Switch = gate("port$i")->getPreviousGate()->getOwnerModule();
-    int moduleAddress;
-    for (int i = 2; i < Switch->gateSize("port$o"); i++){
-        if (Switch->gate("port$o", i)->isConnected())
-        {
-          moduleAddress = Switch->gate("port$o", i)->getId();
-          //EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
-          configuration.push_back(moduleAddress);
-        }
-    }
+void Client::updateConfiguration(){
+    class Admin *admin = check_and_cast<class Admin *>(Admin);
+
+    configuration.clear();
+    configuration.assign(admin->configuration.begin(), admin->configuration.end());
 }
