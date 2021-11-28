@@ -47,6 +47,7 @@ class Server : public cSimpleModule
     // State Machine of the server
     int x = 0;
     vector<int> configuration;
+    vector<int> newConfiguration;
     vector<latest_client_response> latestClientResponses;
 
     // Persistent state --> Updated on stable storage before responding to RPCs
@@ -106,6 +107,7 @@ void Server::initialize()
   WATCH(adminAddress);
   WATCH(myAddress);
   WATCH_VECTOR(configuration);
+  WATCH_VECTOR(newConfiguration);
   WATCH(x);
   WATCH(currentTerm);
   WATCH(votedFor);
@@ -125,7 +127,7 @@ void Server::initialize()
   firstEntry.value = x;
   firstEntry.term = currentTerm;
   firstEntry.logIndex = 0;
-  firstEntry.configuration.assign(configuration.begin(), configuration.end());
+  //firstEntry.cOld.assign(configuration.begin(), configuration.end());
   log.push_back(firstEntry);
   scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
@@ -179,7 +181,8 @@ void Server::handleMessage(cMessage *msg)
   for (int i = 0; i < appendEntryTimers.size() ; i++){
     if (msg == appendEntryTimers[i].timeoutEvent){
       log_entry newEntry = appendEntryTimers[i].entry;
-      newEntry.configuration.assign(appendEntryTimers[i].entry.configuration.begin(), appendEntryTimers[i].entry.configuration.end());
+      newEntry.cOld.assign(appendEntryTimers[i].entry.cOld.begin(), appendEntryTimers[i].entry.cOld.end());
+      newEntry.cNew.assign(appendEntryTimers[i].entry.cNew.begin(), appendEntryTimers[i].entry.cNew.end());
       clients_data temp;
       temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
       //Resend the message
@@ -339,8 +342,11 @@ void Server::handleMessage(cMessage *msg)
         int position = getIndex(configuration, pk->getSrcAddress());
         nextIndex[position]--;
         log_entry newEntry;
-        newEntry = log[nextIndex[position]];  
-        newEntry.configuration.assign(log[nextIndex[position]].configuration.begin(), log[nextIndex[position]].configuration.end());
+        newEntry = log[nextIndex[position]];
+        if(log[nextIndex[position]].var == 'C'){  
+          newEntry.cOld.assign(log[nextIndex[position]].cOld.begin(), log[nextIndex[position]].cOld.end());
+          newEntry.cNew.assign(log[nextIndex[position]].cNew.begin(), log[nextIndex[position]].cNew.end());
+        }
         appendNewEntryTo(newEntry, receiverAddress, position);
       }
       else{
@@ -350,7 +356,10 @@ void Server::handleMessage(cMessage *msg)
         if(nextIndex[position] <= log.size()){
           log_entry newEntry;
           newEntry = log[nextIndex[position]];
-          newEntry.configuration.assign(log[nextIndex[position]].configuration.begin(), log[nextIndex[position]].configuration.end());
+          if(log[nextIndex[position]].var == 'C'){  
+            newEntry.cOld.assign(log[nextIndex[position]].cOld.begin(), log[nextIndex[position]].cOld.end());
+            newEntry.cNew.assign(log[nextIndex[position]].cNew.begin(), log[nextIndex[position]].cNew.end());
+          }
           appendNewEntryTo(newEntry, receiverAddress, position);
         }
 
@@ -425,6 +434,10 @@ void Server::handleMessage(cMessage *msg)
         newEntry.clientAddress = pk->getSrcAddress();
         newEntry.var = pk->getVar();
         newEntry.value = pk->getValue();
+        if(pk->getClusterConfig().servers.empty() == false){
+          newEntry.cOld.assign(configuration.begin(), configuration.end());
+          newEntry.cNew.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
+        }
         log.push_back(newEntry);
         cancelEvent(sendHearthbeat);
         appendNewEntry(newEntry);
@@ -510,8 +523,8 @@ void Server::appendNewEntry(log_entry newEntry){
       newTimer.prevLogTerm = log.back().term;
       newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
       newTimer.entry = newEntry; // Should be sufficient to copy var, value, term, logIndex
-      newTimer.entry.configuration.assign(newEntry.configuration.begin(), newEntry.configuration.end()); // copy by value ("deep copy")
-      
+      newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); //deep copy
+      newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
       appendEntriesRPC->setDestAddress(configuration[i]);
       send(appendEntriesRPC, "port$o");
       
@@ -542,8 +555,8 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   newTimer.destination = destAddress;
   newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
   newTimer.entry = newEntry;
-  newTimer.entry.configuration.assign(newEntry.configuration.begin(), newEntry.configuration.end()); // copy by value ("deep copy")
-    
+  newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // copy by value ("deep copy")
+  newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
   appendEntriesRPC->setDestAddress(destAddress);
   send(appendEntriesRPC, "port$o");
     

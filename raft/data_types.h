@@ -28,7 +28,8 @@ struct log_entry
     int term;
     int logIndex;
     int clientAddress;
-    vector<int> configuration;
+    vector<int> cOld;
+    vector<int> cNew;
 };
 
 struct append_entry_timer

@@ -187,6 +187,7 @@ void Admin::sendChangeConfig(bool onlyServer){
           configChangedRPC->setDestAddress(Switch->gate("port$o", i)->getId());
           configChangedRPC->setClusterConfig(newConfig);
           configChangedRPC->setSequenceNumber(sequenceNumber);
+          configChangedRPC->setVar('C');
           send(configChangedRPC, "port$o");
         }
       }
@@ -198,6 +199,7 @@ void Admin::sendChangeConfig(bool onlyServer){
         configChangedRPC->setDestAddress(Switch->gate("port$o", i)->getId());
         configChangedRPC->setClusterConfig(newConfig);
         configChangedRPC->setSequenceNumber(sequenceNumber);
+        configChangedRPC->setVar('C');
         send(configChangedRPC, "port$o");
       }
     }
