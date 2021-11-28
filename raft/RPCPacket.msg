@@ -3,6 +3,7 @@ cplusplus {{
 }}
 
 struct log_entry;
+struct clients_data;
 
 enum RPCPacketType
 {

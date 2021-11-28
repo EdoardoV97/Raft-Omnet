@@ -368,7 +368,7 @@ void Server::handleMessage(cMessage *msg)
             if(log[lastApplied].var == 'N'){
               if(waitingNoOp == true){
                 waitingNoOp = false;
-                startReadOnly();
+                startReadOnlyLeaderCheck();
               }
             }
             else{ // Write response case
@@ -427,7 +427,6 @@ void Server::handleMessage(cMessage *msg)
         newEntry.clientAddress = pk->getSrcAddress();
         newEntry.var = pk->getVar();
         newEntry.value = pk->getValue();
-        newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
         log.push_back(newEntry);
         cancelEvent(sendHearthbeat);
         appendNewEntry(newEntry);
@@ -473,7 +472,7 @@ void Server::handleMessage(cMessage *msg)
         if(acks > configuration.size()/2){
           countingFeedback = false;
           for (int i = 0; i < pendingReadClients.size(); i++){
-            sendResponseToClient(READ, pendingReadClients);
+            sendResponseToClient(READ, pendingReadClients[i]);
           }
           pendingReadClients.clear();
         }
@@ -579,7 +578,6 @@ bool Server::majority(int N){
 }
 
 void Server::applyCommand(log_entry entry){
-  latestClientResponses.assign(entry.clientsData.begin(), entry.clientsData.end());
   if(entry.value == -2){ //no_op entry
     return;
   }
@@ -671,7 +669,6 @@ void Server::becomeLeader(){
   newEntry.term = currentTerm;
   newEntry.logIndex = log.size();
   newEntry.var = 'N';
-  newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
   appendNewEntry(newEntry);
 
   scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); // Trigger istantaneously the sendHeartbeat
@@ -730,7 +727,7 @@ void Server::updateLatestClientSequenceNumber(int clientAddress, int sequenceNum
 
 void Server::sendAck(int destAddress, int seqNum){
   ACK = new RPCAckPacket("RPC_ACK", RPC_ACK);
-  ACK->setHeartbeatSeqNum(seqNum);
+  ACK->setSequenceNumber(seqNum);
   ACK->setSrcAddress(myAddress);
   ACK->setDestAddress(destAddress);
   send(ACK, "port$o"); 
@@ -740,16 +737,16 @@ void Server::sendResponseToClient(int type, int clientAddress){
   clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
   if(type == READ){
     clientCommandResponseRPC->setValue(x);
-    latestClientResponses[getClientIndex(pendingReadClients[i])].latestResponse = x;
+    latestClientResponses[getClientIndex(clientAddress)].latestReponseToClient = x;
   }else{
     clientCommandResponseRPC->setValue(-1); // Convention for write responses
-    latestClientResponses[getClientIndex(pendingReadClients[i])].latestResponse = -1;
+    latestClientResponses[getClientIndex(clientAddress)].latestReponseToClient = -1;
   }
   clientCommandResponseRPC->setSequenceNumber(latestClientResponses[getClientIndex(clientAddress)].latestSequenceNumber + 1);
   clientCommandResponseRPC->setSrcAddress(myAddress);
   clientCommandResponseRPC->setDestAddress(clientAddress);
   send(clientCommandResponseRPC, "port$o");
-  latestClientResponses[getClientIndex(pendingReadClients[i])].latestSequenceNumber++;
+  latestClientResponses[getClientIndex(clientAddress)].latestSequenceNumber++;
 }
 
 void Server::startReadOnlyLeaderCheck(){
