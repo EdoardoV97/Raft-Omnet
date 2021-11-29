@@ -226,7 +226,14 @@ void Server::handleMessage(cMessage *msg)
       cancelEvent(electionTimeoutEvent);
       receiverAddress = pk->getSrcAddress();
       //1) Reply false if term < currentTerm 2)Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm 
-      if((pk->getTerm() < currentTerm) || log[pk->getPrevLogIndex()].term != pk->getPrevLogTerm()){ //TODO attento a null pointer exception
+      // To avoid out of bound access
+      bool partialEval = false;
+      if(pk->getPrevLogIndex() < log.size()){
+        if(log[pk->getPrevLogIndex()].term != pk->getPrevLogTerm()){
+          partialEval = true;
+        }
+      }else{partialEval = true;}      
+      if((pk->getTerm() < currentTerm) || partialEval){
         appendEntriesResponseRPC = new RPCAppendEntriesResponsePacket("RPC_APPEND_ENTRIES_RESPONSE", RPC_APPEND_ENTRIES_RESPONSE);
         appendEntriesResponseRPC->setSuccess(false);
         appendEntriesResponseRPC->setTerm(currentTerm);
@@ -250,6 +257,18 @@ void Server::handleMessage(cMessage *msg)
           }
         }
         latestClientResponses.assign(pk->getClientsData().responses.begin(), pk->getClientsData().responses.end());
+        // If it's a membership change entry
+        if(pk->getEntry().var == 'C'){
+          // If it is the entry of the first phase (Cold,new)
+          if(!pk->getEntry().cOld.empty()){
+            configuration.assign(pk->getEntry().cOld.begin(), pk->getEntry().cOld.end()); // It is necessary only for servers of the new configuration to learn the old configuration
+            newConfiguration.assign(pk->getEntry().cNew.begin(), pk->getEntry().cNew.end());
+          }
+          // If it is the entry of the second phase (Cnew)
+          else{
+            configuration = newConfiguration;
+          }
+        } 
         //Reply true
         appendEntriesResponseRPC = new RPCAppendEntriesResponsePacket("RPC_APPEND_ENTRIES_RESPONSE", RPC_APPEND_ENTRIES_RESPONSE);
         appendEntriesResponseRPC->setSuccess(true);
@@ -449,8 +468,21 @@ void Server::handleMessage(cMessage *msg)
                 startReadOnlyLeaderCheck();
               }
             }
-            else{ // Write response case
-              sendResponseToClient(WRITE, log[lastApplied].clientAddress);
+            else{
+              if(log[lastApplied].var == 'C' && !log[lastApplied].cOld.empty()){ //Cold,new case, trigger the Cnew append
+                log_entry newEntry;
+                newEntry.term = currentTerm;
+                newEntry.logIndex = log.size();
+                newEntry.clientAddress = log[lastApplied].clientAddress;
+                newEntry.var = 'C';
+                newEntry.value = log[lastApplied].value;
+                // implicitly newEntry.cOld is empty (Convention: it means that it is the Cnew entry)
+                newEntry.cNew.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
+                appendNewEntry(newEntry);
+              }
+              else{ // Write response case
+                sendResponseToClient(WRITE, log[lastApplied].clientAddress);
+              }
             }
           }
         }
