@@ -134,7 +134,7 @@ void Server::initialize()
   WATCH(status);
 
   initializeConfiguration();
-  newConfiguration.assign(configuration.begin(), configuration.end())
+  newConfiguration.assign(configuration.begin(), configuration.end());
   //Pushing the initial configuration in the log
   log_entry firstEntry;
   firstEntry.var = 'C';
