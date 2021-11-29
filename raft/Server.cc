@@ -91,6 +91,7 @@ class Server : public cSimpleModule
     void sendResponseToClient(int type, int clientAddress);
     void startReadOnlyLeaderCheck();
     bool checkCommittingConfigWithoutMe();
+    bool checkNewServersAreUpToDate();
 };
 
 Define_Module(Server);
@@ -133,11 +134,10 @@ void Server::initialize()
   initializeConfiguration();
   //Pushing the initial configuration in the log
   log_entry firstEntry;
-  firstEntry.var = 'x';
-  firstEntry.value = x;
+  firstEntry.var = 'C';
   firstEntry.term = currentTerm;
   firstEntry.logIndex = 0;
-  //firstEntry.cOld.assign(configuration.begin(), configuration.end());
+  firstEntry.cNew.assign(configuration.begin(), configuration.end());
   log.push_back(firstEntry);
   scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
@@ -425,9 +425,10 @@ void Server::handleMessage(cMessage *msg)
             
             if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
               ++nextIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())];
+              ++matchIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())];
             }
 
-            if(nextEntryIndex <= log.size()){
+            if(nextEntryIndex < log.size()){
               log_entry newEntry;
               newEntry = log[nextEntryIndex];
               if(newEntry.var == 'C'){  
@@ -441,7 +442,7 @@ void Server::handleMessage(cMessage *msg)
             position = getIndex(newConfiguration, pk->getSrcAddress());
             matchIndexNewConfig[position] = nextIndexNewConfig[position];
             nextEntryIndex = ++nextIndexNewConfig[position]; 
-            if(nextIndexNewConfig[position] <= log.size()){
+            if(nextIndexNewConfig[position] < log.size()){
               log_entry newEntry;
               newEntry = log[nextEntryIndex];
               if(newEntry.var == 'C'){  
@@ -450,13 +451,34 @@ void Server::handleMessage(cMessage *msg)
               }
               appendNewEntryTo(newEntry, receiverAddress, position);
             }
+            else{
+              if(checkNewServersAreUpToDate()){
+                log_entry newEntry;
+                newEntry.term = currentTerm;
+                newEntry.logIndex = log.size();
+                newEntry.clientAddress = adminAddress;
+                newEntry.var = 'C';
+                newEntry.cOld.assign(configuration.begin(), configuration.end());
+                newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
+                log.push_back(newEntry);
+                matchIndex[getIndex(configuration, myAddress)]++;
+                // Update also in the matchIndexNewConfig if leader is also in that new configuration.
+                if (getIndex(newConfiguration, myAddress) != -1)
+                {
+                  matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
+                }
+                cancelEvent(sendHearthbeat);
+                appendNewEntry(newEntry);
+                scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); 
+              }
+            }
           }
         }
         else{ // Not membership change occurring
           position = getIndex(configuration, pk->getSrcAddress());
           matchIndex[position] = nextIndex[position];
           nextEntryIndex = ++nextIndex[position]; 
-          if(nextIndex[position] <= log.size()){
+          if(nextEntryIndex < log.size()){
             log_entry newEntry;
             newEntry = log[nextEntryIndex];
             if(newEntry.var == 'C'){  
@@ -497,11 +519,14 @@ void Server::handleMessage(cMessage *msg)
                   appendNewEntry(newEntry);
                 }
                 else{ //If Cnew is now committed (second phase is terminated)
+                  configuration = newConfiguration;
+                  nextIndex.assign(nextIndexNewConfig.begin(), nextIndexNewConfig.end());
+                  matchIndex.assign(matchIndexNewConfig.begin(), matchIndexNewConfig.end());
                   // If the leader is not in Cnew become follower
                   if(getIndex(newConfiguration, myAddress) == -1){
                     becomeFollower(pk);
                   }
-                  configuration = newConfiguration; // TODO va messo?
+                  sendResponseToClient(WRITE, log[lastApplied].clientAddress); // This is the response to the Admin
                 }
               }
               else{ // Write response case
@@ -580,27 +605,22 @@ void Server::handleMessage(cMessage *msg)
       }
       
       if(pk->getType() == WRITE){
+        if(pk->getVar() == 'C'){
+          adminAddress = pk->getSrcAddress();
+          newConfiguration.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
+          // Initializing nextIndexNewConfig and matchIndexNewConfig to manage servers in the newConfiguration
+          nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex + 1);
+          matchIndexNewConfig.resize(newConfiguration.size(), 0);
+          return;
+        }
         log_entry newEntry;
         newEntry.term = currentTerm;
         newEntry.logIndex = log.size();
         newEntry.clientAddress = pk->getSrcAddress();
         newEntry.var = pk->getVar();
         newEntry.value = pk->getValue();
-        if(pk->getVar() == 'C'){
-          newEntry.cOld.assign(configuration.begin(), configuration.end());
-          newEntry.cNew.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
-          newConfiguration.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
-          // Initializing nextIndexNewConfig and matchIndexNewConfig to manage servers in the newConfiguration
-          nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex + 1);
-          matchIndexNewConfig.resize(newConfiguration.size(), 0);
-        }
         log.push_back(newEntry);
         matchIndex[getIndex(configuration, myAddress)]++;
-        // Update also in the matchIndexNewConfig if membership change occurring and the leader is also in that new configuration.
-        if (pk->getVar() == 'C' && getIndex(newConfiguration, myAddress))
-        {
-          matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
-        }
         
         cancelEvent(sendHearthbeat);
         appendNewEntry(newEntry);
@@ -823,7 +843,6 @@ bool Server::majority(int N){
     // If a membership change occurring and the leader is committing Cnew and is not in the new configuration it must NOT count itself in majorities
     if(checkCommittingConfigWithoutMe() == true){
       counter1--;
-      counter2--;
     }
     // To have majority i need disjoint agreement
     return counter1 > (total1/2) && counter2 > (total2/2);
@@ -1041,9 +1060,32 @@ void Server::startReadOnlyLeaderCheck(){
 
 bool Server::checkCommittingConfigWithoutMe(){
   for (int i = 0; i < log.size(); i++){
-    if(log[i].var == 'C' && log[i].cOld.empty() && log[i].logIndex < commitIndex && getIndex(newConfiguration, myAddress)){
+    if(log[i].var == 'C' && log[i].cOld.empty() && log[i].logIndex < commitIndex && getIndex(newConfiguration, myAddress) == -1){
       return true;
     }
+  }
+  return false;
+}
+
+bool Server::checkNewServersAreUpToDate(){
+  vector<int> serversOnlyInNewConf;
+  int counter;
+  // Finding all servers which are in the "new" configurations but NOT in the "old" one.
+  for (int i = 0; i < newConfiguration.size(); i++){
+    if(getIndex(configuration, newConfiguration[i]) == -1){
+      serversOnlyInNewConf.push_back(newConfiguration[i]);
+    }
+  }
+
+  for (int i = 0; i < serversOnlyInNewConf.size(); i++){
+    if(matchIndexNewConfig[getIndex(newConfiguration, serversOnlyInNewConf[i])] == log.size()-1){
+      counter++;
+    }
+  }
+  
+  if (counter == serversOnlyInNewConf.size())
+  {
+    return true;
   }
   return false;
 }
