@@ -19,6 +19,7 @@ class Server : public cSimpleModule
     
     cMessage *sendHearthbeat;
     cMessage *electionTimeoutEvent;
+    cMessage *minElectionTimeoutEvent;
     vector<append_entry_timer> appendEntryTimers;
     
     int myAddress;   // This is the server ID
@@ -35,6 +36,7 @@ class Server : public cSimpleModule
     int heartbeatSeqNum = 0; // This is to allow acks for heartbeat for read-only operations
     bool waitingNoOp = false;
     vector<int> pendingReadClients;
+    bool believeCurrentLeaderExists = false;
 
     int adminAddress;  // This is the admin address ID
 
@@ -106,6 +108,7 @@ void Server::initialize()
   // Create self messages needed for timeouts
   sendHearthbeat = new cMessage("send-hearthbeat");
   electionTimeoutEvent = new cMessage("election-timeout-event");
+  minElectionTimeoutEvent = new cMessage("min-election-timeout-event");
 
   // Initialize addresses
   myAddress = gate("port$i")->getPreviousGate()->getId(); // Return index of this server gate port in the Switch
@@ -170,7 +173,7 @@ void Server::handleMessage(cMessage *msg)
     return;
   }
 
-  if (msg == electionTimeoutEvent){
+  if(msg == electionTimeoutEvent){
     EV << "Starting a new leader election, i am a candidate\n";
     becomeCandidate();
     requestVoteRPC = new RPCRequestVotePacket("RPC_REQUEST_VOTE", RPC_REQUEST_VOTE);
@@ -184,6 +187,10 @@ void Server::handleMessage(cMessage *msg)
     return;
   }
   
+  if(msg == minElectionTimeoutEvent){
+    believeCurrentLeaderExists = false;
+  }
+
   // Retry append entries if an appendEntryTimer is fired 
   for (int i = 0; i < appendEntryTimers.size() ; i++){
     if (msg == appendEntryTimers[i].timeoutEvent){
@@ -224,6 +231,8 @@ void Server::handleMessage(cMessage *msg)
     RPCAppendEntriesPacket *pk = check_and_cast<RPCAppendEntriesPacket *>(pkGeneric);
     // If is NOT heartbeat
     if (pk->getEntry().term != -1){
+      cancelEvent(minElectionTimeoutEvent);
+      believeCurrentLeaderExists = true;
       cancelEvent(electionTimeoutEvent);
       receiverAddress = pk->getSrcAddress();
       //1) Reply false if term < currentTerm 2)Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm 
@@ -278,6 +287,7 @@ void Server::handleMessage(cMessage *msg)
         appendEntriesResponseRPC->setDestAddress(receiverAddress);
         send(appendEntriesResponseRPC, "port$o");
       }
+      scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
       scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
     }
     else{  // Heartbeat case
@@ -290,19 +300,22 @@ void Server::handleMessage(cMessage *msg)
         }
         else{ //I am not a candidate, and i am a follower remain follower, otherwise if i am a leader i ignore heartbeat
           if (status == FOLLOWER){
-          cancelEvent(electionTimeoutEvent);
-          leaderAddress = pk->getLeaderId();
-          if(pk->getLeaderCommit() > commitIndex){
-            if(pk->getLeaderCommit() < pk->getEntry().logIndex){
-              commitIndex = pk->getLeaderCommit();
-            } else{
-              commitIndex = pk->getEntry().logIndex;
-            }
+            cancelEvent(minElectionTimeoutEvent);
+            cancelEvent(electionTimeoutEvent);
+            leaderAddress = pk->getLeaderId();
+            believeCurrentLeaderExists = true;
+            if(pk->getLeaderCommit() > commitIndex){
+              if(pk->getLeaderCommit() < pk->getEntry().logIndex){
+                commitIndex = pk->getLeaderCommit();
+              } else{
+                commitIndex = pk->getEntry().logIndex;
+              }
           }
           if(pk->getHeartbeatSeqNum() != -1){
             sendAck(pk->getSrcAddress(), pk->getHeartbeatSeqNum());
           }
           latestClientResponses.assign(pk->getClientsData().responses.begin(), pk->getClientsData().responses.end());
+          scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
           scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
          }
         }
@@ -329,15 +342,17 @@ void Server::handleMessage(cMessage *msg)
     } else{
       //2)If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote.
       if((votedFor == -1 || votedFor == pk->getCandidateId()) && (log.back().term < pk->getLastLogTerm() || (log.back().term == pk->getLastLogTerm() && log.back().logIndex <= pk->getLastLogIndex()))){
-        cancelEvent(electionTimeoutEvent);
-        votedFor = pk->getCandidateId();
-        requestVoteResponseRPC = new RPCRequestVoteResponsePacket("RPC_REQUEST_VOTE_RESPONSE", RPC_REQUEST_VOTE_RESPONSE);
-        requestVoteResponseRPC->setVoteGranted(true);
-        requestVoteResponseRPC->setTerm(currentTerm);
-        requestVoteResponseRPC->setSrcAddress(myAddress);
-        requestVoteResponseRPC->setDestAddress(receiverAddress);
-        send(requestVoteResponseRPC, "port$o");
-        scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
+        if(!believeCurrentLeaderExists){
+          cancelEvent(electionTimeoutEvent);
+          votedFor = pk->getCandidateId();
+          requestVoteResponseRPC = new RPCRequestVoteResponsePacket("RPC_REQUEST_VOTE_RESPONSE", RPC_REQUEST_VOTE_RESPONSE);
+          requestVoteResponseRPC->setVoteGranted(true);
+          requestVoteResponseRPC->setTerm(currentTerm);
+          requestVoteResponseRPC->setSrcAddress(myAddress);
+          requestVoteResponseRPC->setDestAddress(receiverAddress);
+          send(requestVoteResponseRPC, "port$o");
+          scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
+        }
       }
       else{
         requestVoteResponseRPC = new RPCRequestVoteResponsePacket("RPC_REQUEST_VOTE_RESPONSE", RPC_REQUEST_VOTE_RESPONSE);
@@ -355,7 +370,11 @@ void Server::handleMessage(cMessage *msg)
     RPCAppendEntriesResponsePacket *pk = check_and_cast<RPCAppendEntriesResponsePacket *>(pkGeneric);
     if(status == LEADER){
       receiverAddress = pk->getSrcAddress();
-      
+      // If a very late message coming from someone from before a membership change already completed (which didn't include him in the new configuration)
+      if (getIndex(configuration, receiverAddress) == -1 && getIndex(newConfiguration, receiverAddress) == -1)
+      {
+        break;
+      }
       for(int i=0; i < appendEntryTimers.size() ; i++){
         if (receiverAddress == appendEntryTimers[i].destination){
           cancelEvent(appendEntryTimers[i].timeoutEvent);
@@ -363,12 +382,6 @@ void Server::handleMessage(cMessage *msg)
           break;
         }
       }
-      // If a very late message coming from someone from before a membership change already completed (which didn't include him in the new configuration)
-      if (getIndex(configuration, pk->getSrcAddress()) == -1 && getIndex(newConfiguration, pk->getSrcAddress()) == -1)
-      {
-        break;
-      }
-      
 
       if(pk->getSuccess() == false){
         int position;
@@ -479,13 +492,14 @@ void Server::handleMessage(cMessage *msg)
                   newEntry.var = 'C';
                   newEntry.value = log[lastApplied].value;
                   // implicitly newEntry.cOld is empty (Convention: it means that it is the Cnew entry)
-                  newEntry.cNew.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
+                  newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
+                  log.push_back(newEntry);
                   appendNewEntry(newEntry);
                 }
                 else{ //If Cnew is now committed (second phase is terminated)
                   // If the leader is not in Cnew become follower
                   if(getIndex(newConfiguration, myAddress) == -1){
-                    becomeFollower();
+                    becomeFollower(pk);
                   }
                   configuration = newConfiguration; // TODO va messo?
                 }
@@ -509,7 +523,10 @@ void Server::handleMessage(cMessage *msg)
       if (pk->getVoteGranted() == true){
         // If there is a membership change is NOT occurring
         if (newConfiguration == configuration){
-          votes++;
+          // If the vote is granted by a server in configuration (to manage case in which before a membership change, some new servers are added but the process is not started and an election is going on)
+          if(getIndex(configuration, pk->getSrcAddress()) != -1){
+            votes++;
+          }
         }
         else{ // If a membership change IS occurring
           // If the vote is granted by a server in configuration
@@ -904,6 +921,8 @@ void Server::becomeCandidate(){
 }
 
 void Server::becomeLeader(){
+  cancelEvent(minElectionTimeoutEvent);
+  believeCurrentLeaderExists = true;
   cancelEvent(electionTimeoutEvent);
   status = LEADER;
   leaderAddress = myAddress;
@@ -924,6 +943,7 @@ void Server::becomeLeader(){
   newEntry.term = currentTerm;
   newEntry.logIndex = log.size();
   newEntry.var = 'N';
+  log.push_back(newEntry);
   appendNewEntry(newEntry);
 
   scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); // Trigger istantaneously the sendHeartbeat
@@ -931,6 +951,8 @@ void Server::becomeLeader(){
 
 void Server::becomeFollower(RPCPacket *pkGeneric){
   cancelEvent(electionTimeoutEvent);
+  cancelEvent(minElectionTimeoutEvent);
+  believeCurrentLeaderExists = true;
   cancelEvent(sendHearthbeat);
   for (int i = 0; i < appendEntryTimers.size() ; i++){
     cancelEvent(appendEntryTimers[i].timeoutEvent);
@@ -948,6 +970,8 @@ void Server::becomeFollower(RPCPacket *pkGeneric){
   matchIndex.clear();
   nextIndexNewConfig.clear();
   matchIndexNewConfig.clear();
+
+  scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
   scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
 
