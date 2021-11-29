@@ -266,7 +266,7 @@ void Server::handleMessage(cMessage *msg)
           }
           // If it is the entry of the second phase (Cnew)
           else{
-            configuration = newConfiguration;
+            configuration = newConfiguration; // va fatto solo in quelle incluse in Cnew?
           }
         } 
         //Reply true
@@ -469,16 +469,25 @@ void Server::handleMessage(cMessage *msg)
               }
             }
             else{
-              if(log[lastApplied].var == 'C' && !log[lastApplied].cOld.empty()){ //Cold,new case, trigger the Cnew append
-                log_entry newEntry;
-                newEntry.term = currentTerm;
-                newEntry.logIndex = log.size();
-                newEntry.clientAddress = log[lastApplied].clientAddress;
-                newEntry.var = 'C';
-                newEntry.value = log[lastApplied].value;
-                // implicitly newEntry.cOld is empty (Convention: it means that it is the Cnew entry)
-                newEntry.cNew.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
-                appendNewEntry(newEntry);
+              if(log[lastApplied].var == 'C'){ 
+                if(!log[lastApplied].cOld.empty()){ //Cold,new case, trigger the Cnew append
+                  log_entry newEntry;
+                  newEntry.term = currentTerm;
+                  newEntry.logIndex = log.size();
+                  newEntry.clientAddress = log[lastApplied].clientAddress;
+                  newEntry.var = 'C';
+                  newEntry.value = log[lastApplied].value;
+                  // implicitly newEntry.cOld is empty (Convention: it means that it is the Cnew entry)
+                  newEntry.cNew.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
+                  appendNewEntry(newEntry);
+                }
+                else{ //If Cnew is now committed (second phase is terminated)
+                  // If 
+                  if(getIndex(newConfiguration, myAddress) == -1){
+                    becomeFollower();
+                  }
+                  configuration = newConfiguration; // TODO va messo?
+                }
               }
               else{ // Write response case
                 sendResponseToClient(WRITE, log[lastApplied].clientAddress);
@@ -792,7 +801,7 @@ bool Server::majority(int N){
 }
 
 void Server::applyCommand(log_entry entry){
-  if(entry.value == -2){ //no_op entry
+  if(entry.value == -2 || entry.var == 'C'){ //no_op entry
     return;
   }
 
