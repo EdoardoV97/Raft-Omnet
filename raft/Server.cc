@@ -88,6 +88,7 @@ class Server : public cSimpleModule
     void sendAck(int destAddress, int seqNum);
     void sendResponseToClient(int type, int clientAddress);
     void startReadOnlyLeaderCheck();
+    bool checkCommittingConfigWithoutMe();
 };
 
 Define_Module(Server);
@@ -482,7 +483,7 @@ void Server::handleMessage(cMessage *msg)
                   appendNewEntry(newEntry);
                 }
                 else{ //If Cnew is now committed (second phase is terminated)
-                  // If 
+                  // If the leader is not in Cnew become follower
                   if(getIndex(newConfiguration, myAddress) == -1){
                     becomeFollower();
                   }
@@ -577,6 +578,13 @@ void Server::handleMessage(cMessage *msg)
           matchIndexNewConfig.resize(newConfiguration.size(), 0);
         }
         log.push_back(newEntry);
+        matchIndex[getIndex(configuration, myAddress)]++;
+        // Update also in the matchIndexNewConfig if membership change occurring and the leader is also in that new configuration.
+        if (pk->getVar() == 'C' && getIndex(newConfiguration, myAddress))
+        {
+          matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
+        }
+        
         cancelEvent(sendHearthbeat);
         appendNewEntry(newEntry);
         scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);      
@@ -795,6 +803,11 @@ bool Server::majority(int N){
         counter2++;
       }
     }
+    // If a membership change occurring and the leader is committing Cnew and is not in the new configuration it must NOT count itself in majorities
+    if(checkCommittingConfigWithoutMe() == true){
+      counter1--;
+      counter2--;
+    }
     // To have majority i need disjoint agreement
     return counter1 > (total1/2) && counter2 > (total2/2);
   }
@@ -1000,4 +1013,13 @@ void Server::startReadOnlyLeaderCheck(){
   withAck = true;
   heartbeatSeqNum++;
   scheduleAt(simTime(), sendHearthbeat); // Trigger immediately an heartbeat send
+}
+
+bool Server::checkCommittingConfigWithoutMe(){
+  for (int i = 0; i < log.size(); i++){
+    if(log[i].var == 'C' && log[i].cOld.empty() && log[i].logIndex < commitIndex && getIndex(newConfiguration, myAddress)){
+      return true;
+    }
+  }
+  return false;
 }
