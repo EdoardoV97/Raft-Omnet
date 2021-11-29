@@ -37,6 +37,7 @@ class Server : public cSimpleModule
     bool waitingNoOp = false;
     vector<int> pendingReadClients;
     bool believeCurrentLeaderExists = false;
+    bool newServersCanVote = false;
 
     int adminAddress;  // This is the admin address ID
 
@@ -92,6 +93,7 @@ class Server : public cSimpleModule
     void startReadOnlyLeaderCheck();
     bool checkCommittingConfigWithoutMe();
     bool checkNewServersAreUpToDate();
+    bool checkIfServerOnlyNew(int address);
 };
 
 Define_Module(Server);
@@ -276,7 +278,7 @@ void Server::handleMessage(cMessage *msg)
           }
           // If it is the entry of the second phase (Cnew)
           else{
-            configuration = newConfiguration; // va fatto solo in quelle incluse in Cnew?
+            configuration.assign(newConfiguration.begin(), newConfiguration.end()); // va fatto solo in quelle incluse in Cnew?
           }
         } 
         //Reply true
@@ -467,6 +469,7 @@ void Server::handleMessage(cMessage *msg)
                 {
                   matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
                 }
+                newServersCanVote = true;
                 cancelEvent(sendHearthbeat);
                 appendNewEntry(newEntry);
                 scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); 
@@ -519,7 +522,7 @@ void Server::handleMessage(cMessage *msg)
                   appendNewEntry(newEntry);
                 }
                 else{ //If Cnew is now committed (second phase is terminated)
-                  configuration = newConfiguration;
+                  configuration.assign(newConfiguration.begin(), newConfiguration.end());
                   nextIndex.assign(nextIndexNewConfig.begin(), nextIndexNewConfig.end());
                   matchIndex.assign(matchIndexNewConfig.begin(), matchIndexNewConfig.end());
                   // If the leader is not in Cnew become follower
@@ -546,7 +549,7 @@ void Server::handleMessage(cMessage *msg)
     if(status == CANDIDATE){
       // If the vote is granted
       if (pk->getVoteGranted() == true){
-        // If there is a membership change is NOT occurring
+        // If there a membership change is NOT occurring
         if (newConfiguration == configuration){
           // If the vote is granted by a server in configuration (to manage case in which before a membership change, some new servers are added but the process is not started and an election is going on)
           if(getIndex(configuration, pk->getSrcAddress()) != -1){
@@ -744,7 +747,7 @@ void Server::appendNewEntry(log_entry newEntry){
     // Send to all followers in newConfiguration
     for (int i = 0; i < newConfiguration.size(); i++){
       // If to avoid sending to myself and avoid sending twice if a server is in both configuration and newConfiguration
-      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i])){
+      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) != -1){
         append_entry_timer newTimer;
         newTimer.destination = newConfiguration[i];
         newTimer.prevLogIndex = log.back().logIndex;
@@ -815,7 +818,7 @@ int Server::getIndex(vector<int> v, int K){
 
 bool Server::majority(int N){
   // If NOT membership change occurring
-  if(configuration == newConfiguration){
+  if(configuration == newConfiguration || newServersCanVote == false){
     int total = configuration.size();
     int counter = 0;
     for (int i = 0; i < matchIndex.size(); i++){
@@ -946,6 +949,7 @@ void Server::becomeLeader(){
   status = LEADER;
   leaderAddress = myAddress;
   votes = 0;
+  newServersCanVote = false;
   votesNewConfig = 0;
   votedFor = -1;
   nextIndex.clear();
@@ -1086,6 +1090,13 @@ bool Server::checkNewServersAreUpToDate(){
   if (counter == serversOnlyInNewConf.size())
   {
     return true;
+  }
+  return false;
+}
+
+bool Server::checkIfServerOnlyNew(int address){
+  if(getIndex(newConfiguration, address) != -1 && getIndex(configuration, address) == -1){
+      return true;
   }
   return false;
 }
