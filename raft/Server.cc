@@ -24,9 +24,12 @@ class Server : public cSimpleModule
     int myAddress;   // This is the server ID
     int receiverAddress; // This is receiver server ID
     
-    int votes = 0; // This is the number of received votes (meaninful when status = candidate)
+    int votes = 0; // This is the number of received votes by servers in the configuration (meaninful when status = candidate). It refers to member in the "old" configuration when a membership change in occurring.
+    int votesNewConfig = 0; // This is the number of received votes by servers in the "new" configuration (meaninful when status = candidate) when a membership change in occurring.
+
     int leaderAddress = -1; // This is the leader ID
-    int acks = 0; // This is the number of acks 
+    int acks = 0; // This is the number of acks (if membership change: acks from configuration)
+    int acksNewConf = 0; // This is the number of akcs of the newConfiguration in case of membership change occurring
     bool countingFeedback = false;
     bool withAck = false;
     int heartbeatSeqNum = 0; // This is to allow acks for heartbeat for read-only operations
@@ -62,6 +65,9 @@ class Server : public cSimpleModule
     // Volatile state on leaders --> Reinitialized after election
     vector<int> nextIndex;
     vector<int> matchIndex;
+
+    vector<int> nextIndexNewConfig;
+    vector<int> matchIndexNewConfig;
 
     void initializeConfiguration();
 
@@ -337,30 +343,95 @@ void Server::handleMessage(cMessage *msg)
           break;
         }
       }
+      // If a very late message coming from someone from before a membership change already completed (which didn't include him in the new configuration)
+      if (getIndex(configuration, pk->getSrcAddress()) == -1 && getIndex(newConfiguration, pk->getSrcAddress()) == -1)
+      {
+        break;
+      }
+      
 
       if(pk->getSuccess() == false){
-        int position = getIndex(configuration, pk->getSrcAddress());
-        nextIndex[position]--;
+        int position;
+        int nextEntryIndex;
         log_entry newEntry;
-        newEntry = log[nextIndex[position]];
-        if(log[nextIndex[position]].var == 'C'){  
-          newEntry.cOld.assign(log[nextIndex[position]].cOld.begin(), log[nextIndex[position]].cOld.end());
-          newEntry.cNew.assign(log[nextIndex[position]].cNew.begin(), log[nextIndex[position]].cNew.end());
+        // If membership change is occurring
+        if(configuration != newConfiguration){
+          if(getIndex(configuration, pk->getSrcAddress()) != -1){
+            position = getIndex(configuration, pk->getSrcAddress());
+            nextEntryIndex = --nextIndex[position]; // first decrement and then save in the variable
+            // If it is also in newConfiguration manage to decrement also in nextIndexNewConfig
+            if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
+              --nextIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())];
+            }        
+          }
+          else{
+            position = getIndex(newConfiguration, pk->getSrcAddress());
+            nextEntryIndex = --nextIndexNewConfig[position];
+          }
+        }
+        else{ // Not membership change occurring
+          position = getIndex(configuration, pk->getSrcAddress());
+          nextEntryIndex = --nextIndex[position];
+        }
+        newEntry = log[nextEntryIndex];
+        if(newEntry.var == 'C'){  
+          newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
+          newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
         }
         appendNewEntryTo(newEntry, receiverAddress, position);
       }
       else{
-        int position = getIndex(configuration, pk->getSrcAddress());
-        matchIndex[position] = nextIndex[position];
-        nextIndex[position]++; 
-        if(nextIndex[position] <= log.size()){
-          log_entry newEntry;
-          newEntry = log[nextIndex[position]];
-          if(log[nextIndex[position]].var == 'C'){  
-            newEntry.cOld.assign(log[nextIndex[position]].cOld.begin(), log[nextIndex[position]].cOld.end());
-            newEntry.cNew.assign(log[nextIndex[position]].cNew.begin(), log[nextIndex[position]].cNew.end());
+        int position;
+        int nextEntryIndex;
+        // If membership change is occurring
+        if(configuration != newConfiguration){
+          if(getIndex(configuration, pk->getSrcAddress()) != -1){
+            position = getIndex(configuration, pk->getSrcAddress());
+            matchIndex[position] = nextIndex[position];
+            nextEntryIndex = ++nextIndex[position];
+            
+            if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
+              ++nextIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())];
+            }
+
+            if(nextEntryIndex <= log.size()){
+              log_entry newEntry;
+              newEntry = log[nextEntryIndex];
+              if(newEntry.var == 'C'){  
+                newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
+                newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+              }
+              appendNewEntryTo(newEntry, receiverAddress, position);
+            }
           }
-          appendNewEntryTo(newEntry, receiverAddress, position);
+          else{
+            position = getIndex(newConfiguration, pk->getSrcAddress());
+            matchIndexNewConfig[position] = nextIndexNewConfig[position];
+            nextEntryIndex = ++nextIndexNewConfig[position]; 
+            if(nextIndexNewConfig[position] <= log.size()){
+              log_entry newEntry;
+              newEntry = log[nextEntryIndex];
+              if(newEntry.var == 'C'){  
+                newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
+                newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+              }
+              appendNewEntryTo(newEntry, receiverAddress, position);
+            }
+          }
+        }
+        else{ // Not membership change occurring
+          position = getIndex(configuration, pk->getSrcAddress());
+          matchIndex[position] = nextIndex[position];
+          nextEntryIndex = ++nextIndex[position]; 
+          if(nextIndex[position] <= log.size()){
+            log_entry newEntry;
+            newEntry = log[nextEntryIndex];
+            if(newEntry.var == 'C'){  
+              newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
+              newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+            }
+            appendNewEntryTo(newEntry, receiverAddress, position);
+          }
         }
 
         for (int newCommitIndex = commitIndex + 1; newCommitIndex < log.size(); newCommitIndex++){
@@ -392,12 +463,34 @@ void Server::handleMessage(cMessage *msg)
     RPCRequestVoteResponsePacket *pk = check_and_cast<RPCRequestVoteResponsePacket *>(pkGeneric);
     //If i am still candidate
     if(status == CANDIDATE){
+      // If the vote is granted
       if (pk->getVoteGranted() == true){
-        votes++;
+        // If there is a membership change is NOT occurring
+        if (newConfiguration == configuration){
+          votes++;
+        }
+        else{ // If a membership change IS occurring
+          // If the vote is granted by a server in configuration
+          if(getIndex(configuration, pk->getSrcAddress()) != -1){
+            votes++;
+          }
+          // If the vote is granted by a server in newConfiguration (note: a server can be in both new and old configurations)
+          if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
+            votesNewConfig++;
+          }
+        }
       }
-      // If majority, become leader sending heartbeat to all other.
+      // Check majority of votes for configuration
       if(votes > configuration.size()/2){
-        becomeLeader();
+        //If a membership change is NOT occurring it is sufficient
+        if(newConfiguration == configuration){
+          becomeLeader();
+        }
+        else{ // If a membership change IS taking place i must also check the other majority
+          if(votesNewConfig > newConfiguration.size()/2){
+            becomeLeader();
+          }
+        }
       }
     }
   }
@@ -434,9 +527,13 @@ void Server::handleMessage(cMessage *msg)
         newEntry.clientAddress = pk->getSrcAddress();
         newEntry.var = pk->getVar();
         newEntry.value = pk->getValue();
-        if(pk->getClusterConfig().servers.empty() == false){
+        if(pk->getVar() == 'C'){
           newEntry.cOld.assign(configuration.begin(), configuration.end());
           newEntry.cNew.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
+          newConfiguration.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
+          // Initializing nextIndexNewConfig and matchIndexNewConfig to manage servers in the newConfiguration
+          nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex + 1);
+          matchIndexNewConfig.resize(newConfiguration.size(), 0);
         }
         log.push_back(newEntry);
         cancelEvent(sendHearthbeat);
@@ -477,15 +574,37 @@ void Server::handleMessage(cMessage *msg)
     if(status == LEADER){
       if(countingFeedback == true){
         if(heartbeatSeqNum == pk->getSequenceNumber()){
-          acks++;
-        }
-        // If majority of heartbeat exchanged, is possible to finalize the pending read-only request
-        if(acks > configuration.size()/2){
-          countingFeedback = false;
-          for (int i = 0; i < pendingReadClients.size(); i++){
-            sendResponseToClient(READ, pendingReadClients[i]);
+          // If not membership change occurring
+          if(configuration == newConfiguration){
+            acks++;
           }
-          pendingReadClients.clear();
+          else{ // If membership change occurring
+            if(getIndex(configuration, pk->getSrcAddress()) != -1){
+              acks++;
+            } 
+            if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
+              acksNewConf++;
+            } 
+          }
+        }
+        // If majority of heartbeat exchanged, is possible to finalize the pending read-only request (NO membership change occurring)
+        if(configuration == newConfiguration){
+          if(acks > configuration.size()/2){
+            countingFeedback = false;
+            for (int i = 0; i < pendingReadClients.size(); i++){
+              sendResponseToClient(READ, pendingReadClients[i]);
+            }
+            pendingReadClients.clear();
+          }
+        }
+        else{ // Membership change occurring, acks must be received by both majority
+          if(acks > configuration.size()/2 && acksNewConf > newConfiguration.size()/2){
+            countingFeedback = false;
+            for (int i = 0; i < pendingReadClients.size(); i++){
+              sendResponseToClient(READ, pendingReadClients[i]);
+            }
+            pendingReadClients.clear();
+          }
         }
       }
     }
@@ -516,14 +635,15 @@ void Server::appendNewEntry(log_entry newEntry){
   
   //Send to all followers in the configuration
   for (int i = 0; i < configuration.size(); i++){
+    // If to avoid sending to myself
     if(configuration[i] != myAddress){
       append_entry_timer newTimer;
       newTimer.destination = configuration[i];
       newTimer.prevLogIndex = log.back().logIndex;
       newTimer.prevLogTerm = log.back().term;
       newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
-      newTimer.entry = newEntry; // Should be sufficient to copy var, value, term, logIndex
-      newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); //deep copy
+      newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
+      newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To deep copy
       newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
       appendEntriesRPC->setDestAddress(configuration[i]);
       send(appendEntriesRPC, "port$o");
@@ -531,6 +651,29 @@ void Server::appendNewEntry(log_entry newEntry){
       appendEntryTimers.push_back(newTimer);
       // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
       scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
+    }
+  }
+  // If a membership change is occurring
+  if(configuration != newConfiguration){
+    // Send to all followers in newConfiguration
+    for (int i = 0; i < newConfiguration.size(); i++){
+      // If to avoid sending to myself and avoid sending twice if a server is in both configuration and newConfiguration
+      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i])){
+        append_entry_timer newTimer;
+        newTimer.destination = newConfiguration[i];
+        newTimer.prevLogIndex = log.back().logIndex;
+        newTimer.prevLogTerm = log.back().term;
+        newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
+        newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
+        newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To perform deep copy
+        newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+        appendEntriesRPC->setDestAddress(newConfiguration[i]);
+        send(appendEntriesRPC, "port$o");
+        
+        appendEntryTimers.push_back(newTimer);
+        // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
+        scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
+      }
     }
   }
   return;
@@ -543,8 +686,15 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
   appendEntriesRPC->setTerm(currentTerm);
   appendEntriesRPC->setLeaderId(myAddress);
-  appendEntriesRPC->setPrevLogIndex(log[nextIndex[index]-1].logIndex); // -1 because the previous
-  appendEntriesRPC->setPrevLogTerm(log[nextIndex[index]-1].term);
+  // If NOT membership change occurring OR if it is occurring but the destination is in configuration
+  if((configuration == newConfiguration) || (configuration != newConfiguration && getIndex(configuration, destAddress) != -1)){
+    appendEntriesRPC->setPrevLogIndex(log[nextIndex[index]-1].logIndex); // -1 because the previous
+    appendEntriesRPC->setPrevLogTerm(log[nextIndex[index]-1].term);
+  }
+  else{ // A membership change is occurring and the destination is ONLY in newConfiguration (by exclusion from the IF case above)
+    appendEntriesRPC->setPrevLogIndex(log[nextIndexNewConfig[index]-1].logIndex); // -1 because the previous
+    appendEntriesRPC->setPrevLogTerm(log[nextIndexNewConfig[index]-1].term);   
+  }
   appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
   appendEntriesRPC->setClientsData(temp);
@@ -555,7 +705,7 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   newTimer.destination = destAddress;
   newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
   newTimer.entry = newEntry;
-  newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // copy by value ("deep copy")
+  newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
   newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
   appendEntriesRPC->setDestAddress(destAddress);
   send(appendEntriesRPC, "port$o");
@@ -578,14 +728,35 @@ int Server::getIndex(vector<int> v, int K){
 }
 
 bool Server::majority(int N){
-  int total = configuration.size();
-  int counter = 0;
-  for (int i = 0; i < matchIndex.size(); i++){
-    if(N >= matchIndex[i]){
-      counter++;
+  // If NOT membership change occurring
+  if(configuration == newConfiguration){
+    int total = configuration.size();
+    int counter = 0;
+    for (int i = 0; i < matchIndex.size(); i++){
+      if(N >= matchIndex[i]){
+        counter++;
+      }
     }
+    return counter > (total/2);
   }
-  return counter > (total/2);
+  else{ // Membership change occurring
+    int total1 = configuration.size();
+    int total2 = newConfiguration.size();
+    int counter1 = 0;
+    int counter2 = 0;
+    for (int i = 0; i < matchIndex.size(); i++){
+      if(N >= matchIndex[i]){
+        counter1++;
+      }
+    }
+    for (int i = 0; i < matchIndexNewConfig.size(); i++){
+      if(N >= matchIndexNewConfig[i]){
+        counter2++;
+      }
+    }
+    // To have majority i need disjoint agreement
+    return counter1 > (total1/2) && counter2 > (total2/2);
+  }
 }
 
 void Server::applyCommand(log_entry entry){
@@ -661,7 +832,20 @@ void Server::becomeCandidate(){
   status = CANDIDATE;
   currentTerm++;
   votedFor = myAddress;
-  votes = 1;
+  // If a membership change is occurring
+  if(configuration != newConfiguration){
+    // If I am in the new configuration
+    if(getIndex(newConfiguration, myAddress) != -1){
+      votesNewConfig = 1;
+    }
+    // If I am in the old configuration
+    if(getIndex(configuration, myAddress) != -1){
+      votes = 1;
+    }
+  }
+  else{ // Not membership change
+    votes = 1;
+  }
   scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
 
@@ -669,12 +853,18 @@ void Server::becomeLeader(){
   cancelEvent(electionTimeoutEvent);
   status = LEADER;
   leaderAddress = myAddress;
-  votes = 0; 
+  votes = 0;
+  votesNewConfig = 0;
   votedFor = -1;
   nextIndex.clear();
   matchIndex.clear();
   nextIndex.resize(configuration.size(), log.back().logIndex + 1);
   matchIndex.resize(configuration.size(), 0);
+  // If i become leader in a membership change phase
+  if(configuration != newConfiguration){
+    nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex + 1);
+    matchIndexNewConfig.resize(newConfiguration.size(), 0);
+  }
 
   log_entry newEntry;
   newEntry.term = currentTerm;
@@ -697,10 +887,13 @@ void Server::becomeFollower(RPCPacket *pkGeneric){
     leaderAddress = pk->getLeaderId();
   }
   votes = 0;
+  votesNewConfig = 0;
   votedFor = -1;
   acks = 0;
   nextIndex.clear();
   matchIndex.clear();
+  nextIndexNewConfig.clear();
+  matchIndexNewConfig.clear();
   scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
 
