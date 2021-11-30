@@ -75,6 +75,7 @@ class Server : public cSimpleModule
     void initializeConfiguration();
 
   protected:
+    virtual void refreshDisplay() const override;
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;
     void appendNewEntry(log_entry newEntry);
@@ -442,6 +443,7 @@ void Server::handleMessage(cMessage *msg)
             }
             else{
               if(checkNewServersAreUpToDate()){ // Now trigger the Cold,new append
+                bubble("Creating C_old,new");
                 log_entry newEntry;
                 newEntry.term = currentTerm;
                 newEntry.logIndex = log.size();
@@ -497,6 +499,7 @@ void Server::handleMessage(cMessage *msg)
             else{
               if(log[lastApplied].var == 'C'){ 
                 if(!log[lastApplied].cOld.empty()){ //Cold,new case, trigger the Cnew append
+                  bubble("Creating C_new");
                   log_entry newEntry;
                   newEntry.term = currentTerm;
                   newEntry.logIndex = log.size();
@@ -1093,7 +1096,8 @@ bool Server::checkNewServersAreUpToDate(){
 
 void Server::sendHeartbeatToFollower(){
   // Send an empty RPCAppendEntries(= hearthbeat), to all followers
-  EV << "Sending hearthbeat to followers\n";
+  //EV << "Sending hearthbeat to followers\n";
+  bubble("Sending heartbeat");
   for (int i = 0; i < configuration.size(); i++){
     if(configuration[i] != myAddress){
       log_entry emptyEntry;
@@ -1178,4 +1182,36 @@ void Server::sendRequestVote(){
     }
   }
   delete(requestVoteRPC);
+}
+
+void Server::refreshDisplay() const
+{
+    char buf[50];
+    std::string s;
+    switch(status){
+      case LEADER:{
+        s = "LEADER";
+      }
+      break;
+      case FOLLOWER:{
+        s = "FOLLOWER";
+      }
+      break;
+      case CANDIDATE:{
+        s = "CANDIDATE";
+      }
+      break;
+      case NON_VOTING:{
+        s = "NON_VOTING";
+      }
+      break;
+    }
+    const char *c = s.c_str();
+    sprintf(buf, "s: %s  Term: %d  x: %d", c, currentTerm, x);
+    getDisplayString().setTagArg("t", 0, buf);
+
+    if (status == LEADER){
+      getDisplayString().setTagArg("i", 0, "device/server2");
+      //getDisplayString().setTagArg("i2", 0, "status/busy");
+    }
 }

@@ -33,6 +33,7 @@ class Client : public cSimpleModule
       bool isRedirect = false;
 
     protected: 
+      virtual void refreshDisplay() const override;
       virtual void initialize() override;
       virtual void handleMessage(cMessage *msg) override;
       void chooseNextRandomOp();
@@ -174,7 +175,7 @@ void Client::chooseNextRandomOp(){
     lastOperation = WRITE;
     //EV << "Sending WRITE command" << endl;
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendWrite);
-    value++;
+    value = intrand(1001);
   }
   isRedirect = false;
 }
@@ -198,4 +199,11 @@ void Client::initializeConfiguration(){
       }
     }
   }
+}
+
+void Client::refreshDisplay() const
+{
+    char buf[40];
+    sprintf(buf, "SN: %d  Op: %d  Val: %d", sequenceNumber, lastOperation, value);
+    getDisplayString().setTagArg("t", 0, buf);
 }

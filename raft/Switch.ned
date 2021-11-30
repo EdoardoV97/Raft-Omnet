@@ -18,7 +18,7 @@ simple Switch
 {
     parameters:
         double delay @unit(s) @prompt("Switch delay");
-        @display("i=block/switch;q=queue");
+        @display("i=device/switch_l;q=queue");
     gates:
         inout port[];
 }

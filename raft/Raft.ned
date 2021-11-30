@@ -23,7 +23,7 @@ network Raft
         }
         server[numServers]: Server {
             parameters:
-                @display("p=70,270,m,10,80");
+                @display("p=70,270,m,10,260");
         }
     connections:
         admin.port <--> switch.port[0];
