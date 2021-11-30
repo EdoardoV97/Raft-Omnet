@@ -57,6 +57,7 @@ void Client::initialize(){
 
   WATCH_VECTOR(configuration);
   WATCH(myAddress);
+  WATCH(value);
 
   sendWrite = new cMessage("sendWrite");
   sendRead = new cMessage("sendRead");
@@ -73,6 +74,7 @@ void Client::handleMessage(cMessage *msg){
     if (isRedirect == false){
       receiverAddress = chooseRandomServer();
     }
+    bubble("Requesting READ");
     cancelEvent(requestTimeoutRead);
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
@@ -88,6 +90,7 @@ void Client::handleMessage(cMessage *msg){
     if (isRedirect == false){
       receiverAddress = chooseRandomServer();
     }
+    bubble("Requesting WRITE");
     cancelEvent(requestTimeoutWrite);
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
@@ -204,6 +207,6 @@ void Client::initializeConfiguration(){
 void Client::refreshDisplay() const
 {
     char buf[40];
-    sprintf(buf, "SN: %d  Op: %d  Val: %d", sequenceNumber, lastOperation, value);
+    sprintf(buf, "SN: %d  Op: %d", sequenceNumber, lastOperation);
     getDisplayString().setTagArg("t", 0, buf);
 }

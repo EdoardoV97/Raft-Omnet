@@ -120,6 +120,7 @@ void Server::initialize()
 
   WATCH(adminAddress);
   WATCH(myAddress);
+  WATCH(leaderAddress);
   WATCH_VECTOR(configuration);
   WATCH_VECTOR(newConfiguration);
   WATCH(x);
@@ -131,6 +132,8 @@ void Server::initialize()
   
   WATCH_VECTOR(nextIndex);
   WATCH_VECTOR(matchIndex);
+  WATCH_VECTOR(matchIndexNewConfig);
+  WATCH_VECTOR(nextIndexNewConfig);
 
   WATCH(status);
 
@@ -139,6 +142,8 @@ void Server::initialize()
   if (par("instantieatedAtRunTime"))
   {
     status = NON_VOTING;
+    configuration.clear();
+    newConfiguration.clear();
     return;
   }
   
@@ -604,6 +609,11 @@ void Server::handleMessage(cMessage *msg)
           nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex + 1);
           matchIndexNewConfig.resize(newConfiguration.size(), 0);
           newServersCanVote = false;
+          log_entry newEntry;
+          newEntry = log.back();
+          newEntry.cOld.assign(log.back().cOld.begin(), log.back().cOld.end());
+          newEntry.cNew.assign(log.back().cNew.begin(), log.back().cNew.end());
+          appendNewEntry(newEntry);
           return;
         } 
         log_entry newEntry;
@@ -742,7 +752,7 @@ void Server::appendNewEntry(log_entry newEntry){
     // Send to all followers in newConfiguration
     for (int i = 0; i < newConfiguration.size(); i++){
       // If to avoid sending to myself and avoid sending twice if a server is in both configuration and newConfiguration
-      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) != -1){
+      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1){
         append_entry_timer newTimer;
         newTimer.destination = newConfiguration[i];
         newTimer.prevLogIndex = log.back().logIndex-1;
@@ -1124,7 +1134,7 @@ void Server::sendHeartbeatToFollower(){
   // If a membership change is occurring (consider Cold,new)
   if (newConfiguration != configuration){
     for (int i = 0; i < newConfiguration.size(); i++){
-      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) != -1){
+      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1){
         log_entry emptyEntry;
         emptyEntry.term = -1; //convention to explicit heartbeat 
         clients_data temp;
@@ -1173,7 +1183,7 @@ void Server::sendRequestVote(){
   // If a membership change is occurring (consider Cold,new)
   if (newConfiguration != configuration){
     for (int i = 0; i < newConfiguration.size(); i++){
-      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) != -1){
+      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1){
 
         requestVoteRPC->setDestAddress(newConfiguration[i]);
         pk_copy = requestVoteRPC->dup();
