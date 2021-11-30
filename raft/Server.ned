@@ -2,7 +2,7 @@
 simple Server
 {
     parameters:
-        int seed = default(1);
+        volatile bool instantieatedAtRunTime = default(false);
         volatile double hearthBeatTime @unit(s);
         volatile double lowElectionTimeout @unit(s);
         volatile double highElectionTimeout @unit(s);

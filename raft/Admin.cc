@@ -93,7 +93,6 @@ void Admin::handleMessage(cMessage *msg)
     }
 
     // 4) The leader has committed the new configuration, so old servers can be shutted down
-    // ASSUMPTION: The mex sent by leader to Admin is never lost! We consider this as an internal mex exchange
     RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
     if (pk->getKind() == RPC_CLIENT_COMMAND_RESPONSE){
       // If sequence number is correct
@@ -128,6 +127,7 @@ void Admin::createNewServer(int index)
 
     // create internals, and schedule it
     module->buildInside();
+    module->par("instantieatedAtRunTime").setBoolValue(true);
     module->callInitialize();
 }
 
@@ -135,7 +135,7 @@ void Admin::createNewServer(int index)
 void Admin::deleteServer()
 {
   int serverID;
-  for (int i = 2; i < Switch->gateSize("port$o"); i++){
+  for (int i = 1; i < Switch->gateSize("port$o"); i++){
       serverID = Switch->gate("port$o", i)->getId();
       for (int k = 0; k < toPurge.size() ; k++){
         if (serverID == toPurge[k]){
@@ -158,7 +158,6 @@ void Admin::updateConfiguration()
     int moduleAddress;
     configuration.clear();
     for (int i = 1; i < Switch->gateSize("port$o"); i++){
-        // TODO: Add check to avoid inserting clients
         if (Switch->gate("port$o", i)->isConnected()){
           std::string serverString = "server";
           std::string moduleCheck = Switch->gate("port$o", i)->getNextGate()->getOwnerModule()->getFullName();

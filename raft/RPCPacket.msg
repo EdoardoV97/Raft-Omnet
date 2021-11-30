@@ -22,14 +22,13 @@ packet RPCPacket
 {
     int srcAddress;
     int destAddress;
-    bool isBroadcast = false;  //Va bene come valore di default?
+    bool isBroadcast = false;
 };
 
 packet RPCClientCommandPacket extends RPCPacket{
     char var;
     int value;
-    // Convention: READ = 0, WRITE = 1; 
-    int type;
+    int type; // Convention: READ = 0, WRITE = 1; 
     int sequenceNumber;
     cluster_configuration clusterConfig;
 }
