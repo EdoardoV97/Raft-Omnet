@@ -88,6 +88,7 @@ void Admin::handleMessage(cMessage *msg)
     }
     else{
       // Resend timeout case
+      cancelEvent(resendTimer);
       sendChangeConfig(true);
       return;
     }

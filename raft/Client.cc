@@ -72,6 +72,7 @@ void Client::handleMessage(cMessage *msg){
     if (isRedirect == false){
       receiverAddress = chooseRandomServer();
     }
+    cancelEvent(requestTimeoutRead);
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
     clientCommandRPC->setSequenceNumber(sequenceNumber);
@@ -86,6 +87,7 @@ void Client::handleMessage(cMessage *msg){
     if (isRedirect == false){
       receiverAddress = chooseRandomServer();
     }
+    cancelEvent(requestTimeoutWrite);
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
     clientCommandRPC->setSequenceNumber(sequenceNumber);
@@ -99,10 +101,14 @@ void Client::handleMessage(cMessage *msg){
     return;
   }
   // If timeout without receiving response, try to resend the mex, choosing another server
-  else if (msg == requestTimeoutRead)
+  else if (msg == requestTimeoutRead){
     scheduleAt(simTime(), sendRead);
-  else if (msg == requestTimeoutWrite)
+    return;
+  }
+  else if (msg == requestTimeoutWrite){
     scheduleAt(simTime(), sendWrite);
+    return;
+  }
 
 
 
@@ -120,9 +126,11 @@ void Client::handleMessage(cMessage *msg){
       isRedirect = true;
       receiverAddress = response->getLastKnownLeader();
       if (lastOperation == READ){
+        cancelEvent(sendRead);
         scheduleAt(simTime(), sendRead);
       }
       else {
+        cancelEvent(sendWrite);
         scheduleAt(simTime(), sendWrite);
       }
     }
@@ -132,11 +140,11 @@ void Client::handleMessage(cMessage *msg){
       if(sequenceNumber == response->getSequenceNumber())
       {
         if (lastOperation == READ){
-          EV << "READ Request SUCCESS! Received response back for request with SN = " << response->getSequenceNumber() << "  from: " << response->getSrcAddress();
-          EV << "Value read is x = " << response->getValue();
+          EV << "READ Request SUCCESS! Received response back for request with SN = " << response->getSequenceNumber() << "  from: " << response->getSrcAddress() << endl;
+          EV << "Value read is x = " << response->getValue() << endl;
         }
         else{
-          EV << "WRITE Request SUCCESS! Received response back for request with SN = " << response->getSequenceNumber() << "  from: " << response->getSrcAddress();
+          EV << "WRITE Request SUCCESS! Received response back for request with SN = " << response->getSequenceNumber() << "  from: " << response->getSrcAddress() << endl;
         }
         //Now client can issue another request
         cancelEvent(requestTimeoutRead);
@@ -144,7 +152,7 @@ void Client::handleMessage(cMessage *msg){
         chooseNextRandomOp();
       }
       else{
-        EV << "Received response back for request with old SN = " << response->getSequenceNumber();
+        EV << "Received response back for request with old SN = " << response->getSequenceNumber() << endl;
       }
     }
   }
@@ -159,12 +167,12 @@ void Client::chooseNextRandomOp(){
   int randomOp = intrand(2);
   if(randomOp == READ){
     lastOperation = READ;
-    EV << "Sending READ command";
+    EV << "Sending READ command" << endl;
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendRead);
   }
   else{
     lastOperation = WRITE;
-    EV << "Sending WRITE command";
+    EV << "Sending WRITE command" << endl;
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendWrite);
     value++;
   }
