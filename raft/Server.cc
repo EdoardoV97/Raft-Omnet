@@ -221,7 +221,8 @@ void Server::handleMessage(cMessage *msg)
         if(log[pk->getPrevLogIndex()].term != pk->getPrevLogTerm()){
           partialEval = true;
         }
-      }else{partialEval = true;}      
+      }
+      else{partialEval = true;}      
       if((pk->getTerm() < currentTerm) || partialEval){
         appendEntriesResponseRPC = new RPCAppendEntriesResponsePacket("RPC_APPEND_ENTRIES_RESPONSE", RPC_APPEND_ENTRIES_RESPONSE);
         appendEntriesResponseRPC->setSuccess(false);
@@ -288,6 +289,7 @@ void Server::handleMessage(cMessage *msg)
             cancelEvent(electionTimeoutEvent);
             leaderAddress = pk->getLeaderId();
             believeCurrentLeaderExists = true;
+            // If leaderCommit > commitIndex, set commitIndex = min (leaderCommit, index of last new entry).
             if(pk->getLeaderCommit() > commitIndex){
               if(pk->getLeaderCommit() < pk->getEntry().logIndex){
                 commitIndex = pk->getLeaderCommit();
@@ -305,7 +307,7 @@ void Server::handleMessage(cMessage *msg)
         }
     }
 
-    for(int i=lastApplied ; commitIndex > i ; i++){
+    for(int i=lastApplied ; i < commitIndex; i++){
       lastApplied++;
       applyCommand(log[lastApplied]);
     }
@@ -593,7 +595,7 @@ void Server::handleMessage(cMessage *msg)
       }
       
       if(pk->getType() == WRITE){
-        if(pk->getVar() == 'C'){
+        if(pk->getVar() == 'C'){ // If a config change mex
           adminAddress = pk->getSrcAddress();
           newConfiguration.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
           // Initializing nextIndexNewConfig and matchIndexNewConfig to manage servers in the newConfiguration
@@ -601,7 +603,7 @@ void Server::handleMessage(cMessage *msg)
           matchIndexNewConfig.resize(newConfiguration.size(), 0);
           newServersCanVote = false;
           return;
-        }
+        } 
         log_entry newEntry;
         newEntry.term = currentTerm;
         newEntry.logIndex = log.size();
@@ -702,7 +704,7 @@ void Server::appendNewEntry(log_entry newEntry){
   appendEntriesRPC->setTerm(currentTerm);
   appendEntriesRPC->setLeaderId(myAddress);
   appendEntriesRPC->setPrevLogIndex(log.back().logIndex - 1);
-  appendEntriesRPC->setPrevLogTerm(log.back().term - 1); 
+  appendEntriesRPC->setPrevLogTerm(log[log.size()-2].term); 
   appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
   appendEntriesRPC->setClientsData(temp);
@@ -715,7 +717,7 @@ void Server::appendNewEntry(log_entry newEntry){
       append_entry_timer newTimer;
       newTimer.destination = configuration[i];
       newTimer.prevLogIndex = log.back().logIndex -1;
-      newTimer.prevLogTerm = log.back().term -1;
+      newTimer.prevLogTerm = log[log.size()-2].term;
       newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
       newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
       newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To deep copy
@@ -739,7 +741,7 @@ void Server::appendNewEntry(log_entry newEntry){
         append_entry_timer newTimer;
         newTimer.destination = newConfiguration[i];
         newTimer.prevLogIndex = log.back().logIndex-1;
-        newTimer.prevLogTerm = log.back().term-1;
+        newTimer.prevLogTerm = log[log.size()-2].term;
         newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
         newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
         newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To perform deep copy
@@ -1107,7 +1109,6 @@ void Server::sendHeartbeatToFollower(){
       appendEntriesRPC->setDestAddress(configuration[i]);
       if(withAck == true){
         appendEntriesRPC->setHeartbeatSeqNum(heartbeatSeqNum);
-        withAck = false;
       }else{
         appendEntriesRPC->setHeartbeatSeqNum(-1);
       }
@@ -1133,7 +1134,6 @@ void Server::sendHeartbeatToFollower(){
         appendEntriesRPC->setDestAddress(newConfiguration[i]);
         if(withAck == true){
           appendEntriesRPC->setHeartbeatSeqNum(heartbeatSeqNum);
-          withAck = false;
         }else{
           appendEntriesRPC->setHeartbeatSeqNum(-1);
         }
@@ -1141,6 +1141,7 @@ void Server::sendHeartbeatToFollower(){
       }
     }
   }
+  withAck = false;
   scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
   return;
 }

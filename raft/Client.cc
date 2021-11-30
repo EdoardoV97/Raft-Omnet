@@ -167,12 +167,12 @@ void Client::chooseNextRandomOp(){
   int randomOp = intrand(2);
   if(randomOp == READ){
     lastOperation = READ;
-    EV << "Sending READ command" << endl;
+    //EV << "Sending READ command" << endl;
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendRead);
   }
   else{
     lastOperation = WRITE;
-    EV << "Sending WRITE command" << endl;
+    //EV << "Sending WRITE command" << endl;
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendWrite);
     value++;
   }
