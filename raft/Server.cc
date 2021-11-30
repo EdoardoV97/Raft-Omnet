@@ -93,6 +93,7 @@ class Server : public cSimpleModule
     void startReadOnlyLeaderCheck();
     bool checkNewServersAreUpToDate();
     void sendHeartbeatToFollower();
+    void sendRequestVote();
 };
 
 Define_Module(Server);
@@ -162,14 +163,7 @@ void Server::handleMessage(cMessage *msg)
     
     EV << "Starting a new leader election, i am a candidate\n";
     becomeCandidate();
-    requestVoteRPC = new RPCRequestVotePacket("RPC_REQUEST_VOTE", RPC_REQUEST_VOTE);
-    requestVoteRPC->setTerm(currentTerm);
-    requestVoteRPC->setCandidateId(myAddress);
-    requestVoteRPC->setLastLogIndex(log.back().logIndex);
-    requestVoteRPC->setLastLogTerm(log.back().term);
-    requestVoteRPC->setSrcAddress(myAddress);
-    requestVoteRPC->setIsBroadcast(true);
-    send(requestVoteRPC, "port$o");
+    sendRequestVote();
     return;
   }
   
@@ -532,7 +526,7 @@ void Server::handleMessage(cMessage *msg)
       }
     }
   }
-    break;
+  break;
   case RPC_REQUEST_VOTE_RESPONSE:
   {
     RPCRequestVoteResponsePacket *pk = check_and_cast<RPCRequestVoteResponsePacket *>(pkGeneric);
@@ -700,6 +694,7 @@ void Server::handleMessage(cMessage *msg)
 }
 
 void Server::appendNewEntry(log_entry newEntry){
+  RPCPacket *pk_copy;
   clients_data temp;
   temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
 
@@ -726,7 +721,9 @@ void Server::appendNewEntry(log_entry newEntry){
       newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To deep copy
       newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
       appendEntriesRPC->setDestAddress(configuration[i]);
-      send(appendEntriesRPC, "port$o");
+
+      pk_copy = appendEntriesRPC->dup();
+      send(pk_copy, "port$o");
       
       appendEntryTimers.push_back(newTimer);
       // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
@@ -748,7 +745,9 @@ void Server::appendNewEntry(log_entry newEntry){
         newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To perform deep copy
         newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
         appendEntriesRPC->setDestAddress(newConfiguration[i]);
-        send(appendEntriesRPC, "port$o");
+
+        pk_copy = appendEntriesRPC->dup();
+        send(pk_copy, "port$o");
         
         appendEntryTimers.push_back(newTimer);
         // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
@@ -756,6 +755,7 @@ void Server::appendNewEntry(log_entry newEntry){
       }
     }
   }
+  delete(appendEntriesRPC);
   return;
 }
 
@@ -968,7 +968,7 @@ void Server::becomeLeader(){
   log.push_back(newEntry);
   appendNewEntry(newEntry);
 
-  scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); // Trigger istantaneously the sendHeartbeat
+  scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); // Schedule the sendHeartbeat
 }
 
 void Server::becomeFollower(RPCPacket *pkGeneric){
@@ -998,16 +998,19 @@ void Server::becomeFollower(RPCPacket *pkGeneric){
 }
 
 void Server::initializeConfiguration(){
-    cModule *Switch = gate("port$i")->getPreviousGate()->getOwnerModule();
-    int moduleAddress;
-    for (int i = 1; i < Switch->gateSize("port$o"); i++){
-        if (Switch->gate("port$o", i)->isConnected())
-        {
-          moduleAddress = Switch->gate("port$o", i)->getId();
-          //EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
-          configuration.push_back(moduleAddress);
-        }
+  cModule *Switch = gate("port$i")->getPreviousGate()->getOwnerModule();
+  int moduleAddress;
+  for (int i = 1; i < Switch->gateSize("port$o"); i++){
+    std::string serverString = "server";
+    std::string moduleCheck = Switch->gate("port$o", i)->getNextGate()->getOwnerModule()->getFullName();
+    if (Switch->gate("port$o", i)->isConnected()){
+      if (moduleCheck.find(serverString) != std::string::npos){
+        moduleAddress = Switch->gate("port$o", i)->getId();
+        //EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
+        configuration.push_back(moduleAddress);
+      }
     }
+  }
 }
 
 int Server::getClientIndex(int clientAddress){
@@ -1109,8 +1112,6 @@ void Server::sendHeartbeatToFollower(){
         appendEntriesRPC->setHeartbeatSeqNum(-1);
       }
       send(appendEntriesRPC, "port$o");
-
-      scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
     }
   }
   // If a membership change is occurring (consider Cold,new)
@@ -1137,10 +1138,41 @@ void Server::sendHeartbeatToFollower(){
           appendEntriesRPC->setHeartbeatSeqNum(-1);
         }
         send(appendEntriesRPC, "port$o");
-
-        scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
       }
     }
   }
+  scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
   return;
+}
+
+void Server::sendRequestVote(){
+  RPCPacket *pk_copy;
+
+  requestVoteRPC = new RPCRequestVotePacket("RPC_REQUEST_VOTE", RPC_REQUEST_VOTE);
+  requestVoteRPC->setTerm(currentTerm);
+  requestVoteRPC->setCandidateId(myAddress);
+  requestVoteRPC->setLastLogIndex(log.back().logIndex);
+  requestVoteRPC->setLastLogTerm(log.back().term);
+  requestVoteRPC->setSrcAddress(myAddress);
+
+  for (int i = 0; i < configuration.size(); i++){
+    if(configuration[i] != myAddress){
+
+      requestVoteRPC->setDestAddress(configuration[i]);
+      pk_copy = requestVoteRPC->dup();
+      send(pk_copy, "port$o");
+    }
+  }
+  // If a membership change is occurring (consider Cold,new)
+  if (newConfiguration != configuration){
+    for (int i = 0; i < newConfiguration.size(); i++){
+      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) != -1){
+
+        requestVoteRPC->setDestAddress(newConfiguration[i]);
+        pk_copy = requestVoteRPC->dup();
+        send(pk_copy, "port$o");
+      }
+    }
+  }
+  delete(requestVoteRPC);
 }
