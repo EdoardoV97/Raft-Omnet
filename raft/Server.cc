@@ -37,7 +37,7 @@ class Server : public cSimpleModule
     bool waitingNoOp = false;
     vector<int> pendingReadClients;
     bool believeCurrentLeaderExists = false;
-    bool newServersCanVote = false;
+    bool newServersCanVote = true;
 
     int adminAddress;  // This is the admin address ID
 
@@ -62,7 +62,7 @@ class Server : public cSimpleModule
     vector<log_entry> log;
 
     // Volatile state --> Reinitialize after crash
-    int commitIndex = 1; // E se il primo log lo committiamo sempre noi??
+    int commitIndex = 1;
     int lastApplied = 1;
 
     // Volatile state on leaders --> Reinitialized after election
@@ -91,9 +91,10 @@ class Server : public cSimpleModule
     void sendAck(int destAddress, int seqNum);
     void sendResponseToClient(int type, int clientAddress);
     void startReadOnlyLeaderCheck();
-    bool checkCommittingConfigWithoutMe();
+    //bool checkCommittingConfigWithoutMe();
     bool checkNewServersAreUpToDate();
-    bool checkIfServerOnlyNew(int address);
+    void sendHeartbeatToFollower();
+    //bool checkIfServerOnlyNew(int address);
 };
 
 Define_Module(Server);
@@ -135,6 +136,12 @@ void Server::initialize()
 
   initializeConfiguration();
   newConfiguration.assign(configuration.begin(), configuration.end());
+  if (par("instantieatedAtRunTime"))
+  {
+    status = NON_VOTING;
+    return;
+  }
+  
   //Pushing the initial configuration in the log
   log_entry firstEntry;
   firstEntry.var = 'C';
@@ -148,35 +155,13 @@ void Server::initialize()
 void Server::handleMessage(cMessage *msg)
 {
   if(msg == sendHearthbeat){
-    // Send an empty RPCAppendEntries(= hearthbeat), to all followers
-    EV << "Sending hearthbeat to followers\n";
-    log_entry emptyEntry;
-    emptyEntry.term = -1; //convention to explicit heartbeat 
-    clients_data temp;
-    temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
-
-
-    appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
-    appendEntriesRPC->setTerm(currentTerm);
-    appendEntriesRPC->setLeaderId(myAddress);
-    appendEntriesRPC->setEntry(emptyEntry);
-    appendEntriesRPC->setLeaderCommit(commitIndex);
-    appendEntriesRPC->setClientsData(temp);
-    appendEntriesRPC->setSrcAddress(myAddress);
-    appendEntriesRPC->setIsBroadcast(true);
-    if(withAck == true){
-      appendEntriesRPC->setHeartbeatSeqNum(heartbeatSeqNum);
-      withAck = false;
-    }else{
-      appendEntriesRPC->setHeartbeatSeqNum(-1);
-    }
-    send(appendEntriesRPC, "port$o");
-
-    scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
+    sendHearthbeatToFollower();
     return;
   }
 
   if(msg == electionTimeoutEvent){
+    if (status == NON_VOTING){return;}
+    
     EV << "Starting a new leader election, i am a candidate\n";
     becomeCandidate();
     requestVoteRPC = new RPCRequestVotePacket("RPC_REQUEST_VOTE", RPC_REQUEST_VOTE);
@@ -222,7 +207,6 @@ void Server::handleMessage(cMessage *msg)
     
   }
     
-  
   RPCPacket *pkGeneric = check_and_cast<RPCPacket *>(msg);
 
   updateTerm(pkGeneric);
@@ -276,6 +260,11 @@ void Server::handleMessage(cMessage *msg)
           if(!pk->getEntry().cOld.empty()){
             configuration.assign(pk->getEntry().cOld.begin(), pk->getEntry().cOld.end()); // It is necessary only for servers of the new configuration to learn the old configuration
             newConfiguration.assign(pk->getEntry().cNew.begin(), pk->getEntry().cNew.end());
+            if (status == NON_VOTING)
+            {
+              becomeFollower();
+            }
+            
           }
           // If it is the entry of the second phase (Cnew)
           else{
@@ -313,14 +302,14 @@ void Server::handleMessage(cMessage *msg)
               } else{
                 commitIndex = pk->getEntry().logIndex;
               }
+            }
+            if(pk->getHeartbeatSeqNum() != -1){
+              sendAck(pk->getSrcAddress(), pk->getHeartbeatSeqNum());
+            }
+            latestClientResponses.assign(pk->getClientsData().responses.begin(), pk->getClientsData().responses.end());
+            scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
+            scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
           }
-          if(pk->getHeartbeatSeqNum() != -1){
-            sendAck(pk->getSrcAddress(), pk->getHeartbeatSeqNum());
-          }
-          latestClientResponses.assign(pk->getClientsData().responses.begin(), pk->getClientsData().responses.end());
-          scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
-          scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
-         }
         }
     }
 
@@ -332,8 +321,11 @@ void Server::handleMessage(cMessage *msg)
   break;
   case RPC_REQUEST_VOTE:
   {
+    if(status == NON_VOTING){break;}
+    
     RPCRequestVotePacket *pk = check_and_cast<RPCRequestVotePacket *>(pkGeneric);
     receiverAddress = pk->getSrcAddress();
+    
     //1)Reply false if term < currentTerm.
     if (pk->getTerm() < currentTerm){
       requestVoteResponseRPC = new RPCRequestVoteResponsePacket("RPC_REQUEST_VOTE_RESPONSE", RPC_REQUEST_VOTE_RESPONSE);
@@ -455,7 +447,7 @@ void Server::handleMessage(cMessage *msg)
               appendNewEntryTo(newEntry, receiverAddress, position);
             }
             else{
-              if(checkNewServersAreUpToDate()){
+              if(checkNewServersAreUpToDate()){ // Now trigger the Cold,new append
                 log_entry newEntry;
                 newEntry.term = currentTerm;
                 newEntry.logIndex = log.size();
@@ -615,6 +607,7 @@ void Server::handleMessage(cMessage *msg)
           // Initializing nextIndexNewConfig and matchIndexNewConfig to manage servers in the newConfiguration
           nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex + 1);
           matchIndexNewConfig.resize(newConfiguration.size(), 0);
+          newServersCanVote = false;
           return;
         }
         log_entry newEntry;
@@ -671,14 +664,14 @@ void Server::handleMessage(cMessage *msg)
           else{ // If membership change occurring
             if(getIndex(configuration, pk->getSrcAddress()) != -1){
               acks++;
-            } 
+            }
             if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
               acksNewConf++;
             } 
           }
         }
         // If majority of heartbeat exchanged, is possible to finalize the pending read-only request (NO membership change occurring)
-        if(configuration == newConfiguration){
+        if(configuration == newConfiguration || newServersCanVote == false){
           if(acks > configuration.size()/2){
             countingFeedback = false;
             for (int i = 0; i < pendingReadClients.size(); i++){
@@ -721,7 +714,6 @@ void Server::appendNewEntry(log_entry newEntry){
   appendEntriesRPC->setLeaderCommit(commitIndex);
   appendEntriesRPC->setClientsData(temp);
   appendEntriesRPC->setSrcAddress(myAddress);
-  appendEntriesRPC->setIsBroadcast(false);
   
   //Send to all followers in the configuration
   for (int i = 0; i < configuration.size(); i++){
@@ -818,38 +810,46 @@ int Server::getIndex(vector<int> v, int K){
 }
 
 bool Server::majority(int N){
+  int total;
+  int counter1 = 0;
+  int counter2 = 0;
   // If NOT membership change occurring
   if(configuration == newConfiguration || newServersCanVote == false){
-    int total = configuration.size();
-    int counter = 0;
-    for (int i = 0; i < matchIndex.size(); i++){
-      if(N >= matchIndex[i]){
-        counter++;
-      }
-    }
-    return counter > (total/2);
-  }
-  else{ // Membership change occurring
-    int total1 = configuration.size();
-    int total2 = newConfiguration.size();
-    int counter1 = 0;
-    int counter2 = 0;
+    total = configuration.size();
     for (int i = 0; i < matchIndex.size(); i++){
       if(N >= matchIndex[i]){
         counter1++;
       }
     }
-    for (int i = 0; i < matchIndexNewConfig.size(); i++){
-      if(N >= matchIndexNewConfig[i]){
-        counter2++;
+    return counter1 > (total/2);
+  }
+  else{ // Membership change occurring
+    // If trying to commit Cnew use only Cnew majority.
+    if(log[N].var == 'C' && log[N].cOld.empty() && !log[N].cNew.empty()){
+      total = newConfiguration.size();
+      for (int i = 0; i < matchIndexNewConfig.size(); i++){
+        if(N >= matchIndexNewConfig[i]){
+          counter1++;
+        }
       }
+      return counter1 > (total/2);
     }
-    // If a membership change occurring and the leader is committing Cnew and is not in the new configuration it must NOT count itself in majorities
-    if(checkCommittingConfigWithoutMe() == true){
-      counter1--;
+    else{ // Trying to commit Cold,new and other entries after (before Cnew) considering disjoint majorities.
+      total = configuration.size();
+      int total2 = newConfiguration.size();
+      for (int i = 0; i < matchIndex.size(); i++){
+        if(N >= matchIndex[i]){
+          counter1++;
+        }
+      }
+      for (int i = 0; i < matchIndexNewConfig.size(); i++){
+        if(N >= matchIndexNewConfig[i]){
+          counter2++;
+        }
+      }
+      // To have majority i need disjoint agreement
+      return counter1 > (total/2) && counter2 > (total2/2);
     }
-    // To have majority i need disjoint agreement
-    return counter1 > (total1/2) && counter2 > (total2/2);
   }
 }
 
@@ -950,7 +950,7 @@ void Server::becomeLeader(){
   status = LEADER;
   leaderAddress = myAddress;
   votes = 0;
-  newServersCanVote = false;
+  newServersCanVote = true;
   votesNewConfig = 0;
   votedFor = -1;
   nextIndex.clear();
@@ -1002,7 +1002,7 @@ void Server::becomeFollower(RPCPacket *pkGeneric){
 void Server::initializeConfiguration(){
     cModule *Switch = gate("port$i")->getPreviousGate()->getOwnerModule();
     int moduleAddress;
-    for (int i = 2; i < Switch->gateSize("port$o"); i++){
+    for (int i = 1; i < Switch->gateSize("port$o"); i++){
         if (Switch->gate("port$o", i)->isConnected())
         {
           moduleAddress = Switch->gate("port$o", i)->getId();
@@ -1063,15 +1063,6 @@ void Server::startReadOnlyLeaderCheck(){
   scheduleAt(simTime(), sendHearthbeat); // Trigger immediately an heartbeat send
 }
 
-bool Server::checkCommittingConfigWithoutMe(){
-  for (int i = 0; i < log.size(); i++){
-    if(log[i].var == 'C' && log[i].cOld.empty() && log[i].logIndex < commitIndex && getIndex(newConfiguration, myAddress) == -1){
-      return true;
-    }
-  }
-  return false;
-}
-
 bool Server::checkNewServersAreUpToDate(){
   vector<int> serversOnlyInNewConf;
   int counter;
@@ -1095,9 +1086,63 @@ bool Server::checkNewServersAreUpToDate(){
   return false;
 }
 
-bool Server::checkIfServerOnlyNew(int address){
-  if(getIndex(newConfiguration, address) != -1 && getIndex(configuration, address) == -1){
-      return true;
+void Server::sendHeartbeatToFollower(){
+  // Send an empty RPCAppendEntries(= hearthbeat), to all followers
+  EV << "Sending hearthbeat to followers\n";
+  for (int i = 0; i < configuration.size(); i++){
+    if(configuration[i] != myAddress){
+      log_entry emptyEntry;
+      emptyEntry.term = -1; //convention to explicit heartbeat 
+      clients_data temp;
+      temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
+    
+      appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
+      appendEntriesRPC->setTerm(currentTerm);
+      appendEntriesRPC->setLeaderId(myAddress);
+      appendEntriesRPC->setEntry(emptyEntry);
+      appendEntriesRPC->setLeaderCommit(commitIndex);
+      appendEntriesRPC->setClientsData(temp);
+      appendEntriesRPC->setSrcAddress(myAddress);
+      appendEntriesRPC->setDestAddress(configuration[i]);
+      if(withAck == true){
+        appendEntriesRPC->setHeartbeatSeqNum(heartbeatSeqNum);
+        withAck = false;
+      }else{
+        appendEntriesRPC->setHeartbeatSeqNum(-1);
+      }
+      send(appendEntriesRPC, "port$o");
+
+      scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
+    }
   }
-  return false;
+  // If a membership change is occurring (consider Cold,new)
+  if (newConfiguration != configuration){
+    for (int i = 0; i < newConfiguration.size(); i++){
+      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) != -1){
+        log_entry emptyEntry;
+        emptyEntry.term = -1; //convention to explicit heartbeat 
+        clients_data temp;
+        temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
+      
+        appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
+        appendEntriesRPC->setTerm(currentTerm);
+        appendEntriesRPC->setLeaderId(myAddress);
+        appendEntriesRPC->setEntry(emptyEntry);
+        appendEntriesRPC->setLeaderCommit(commitIndex);
+        appendEntriesRPC->setClientsData(temp);
+        appendEntriesRPC->setSrcAddress(myAddress);
+        appendEntriesRPC->setDestAddress(newConfiguration[i]);
+        if(withAck == true){
+          appendEntriesRPC->setHeartbeatSeqNum(heartbeatSeqNum);
+          withAck = false;
+        }else{
+          appendEntriesRPC->setHeartbeatSeqNum(-1);
+        }
+        send(appendEntriesRPC, "port$o");
+
+        scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
+      }
+    }
+  }
+  return;
 }

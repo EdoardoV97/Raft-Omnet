@@ -46,4 +46,5 @@ enum serverState
     LEADER = 0,
     FOLLOWER = 1,
     CANDIDATE = 2,
+    NON_VOTING = 3,
 };
