@@ -44,8 +44,8 @@ packet RPCAppendEntriesPacket extends RPCPacket
 {
     int term;                           // leader's term
     int leaderId;                       // leader identifier so follower can redirect clients --> index of leader gate port in the Switch
-    int prevLogIndex;                   // index of log entry immediately preceding new ones          
-    int prevLogTerm;                    // term of prevLogIndex entry
+    int prevLogIndex = 0;                   // index of log entry immediately preceding new ones          
+    int prevLogTerm = 0;                    // term of prevLogIndex entry
     log_entry entry;                    // log entries to store (empty for heartbeat);
     int leaderCommit;                   // leader’s commitIndex
     int heartbeatSeqNum;                //for optional heartbeat with sequence number (for read-only interaction)

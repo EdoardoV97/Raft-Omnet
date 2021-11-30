@@ -701,8 +701,8 @@ void Server::appendNewEntry(log_entry newEntry){
   appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
   appendEntriesRPC->setTerm(currentTerm);
   appendEntriesRPC->setLeaderId(myAddress);
-  appendEntriesRPC->setPrevLogIndex(log.back().logIndex);
-  appendEntriesRPC->setPrevLogTerm(log.back().term); 
+  appendEntriesRPC->setPrevLogIndex(log.back().logIndex - 1);
+  appendEntriesRPC->setPrevLogTerm(log.back().term - 1); 
   appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
   appendEntriesRPC->setClientsData(temp);
@@ -714,8 +714,8 @@ void Server::appendNewEntry(log_entry newEntry){
     if(configuration[i] != myAddress){
       append_entry_timer newTimer;
       newTimer.destination = configuration[i];
-      newTimer.prevLogIndex = log.back().logIndex;
-      newTimer.prevLogTerm = log.back().term;
+      newTimer.prevLogIndex = log.back().logIndex -1;
+      newTimer.prevLogTerm = log.back().term -1;
       newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
       newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
       newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To deep copy
@@ -738,8 +738,8 @@ void Server::appendNewEntry(log_entry newEntry){
       if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) != -1){
         append_entry_timer newTimer;
         newTimer.destination = newConfiguration[i];
-        newTimer.prevLogIndex = log.back().logIndex;
-        newTimer.prevLogTerm = log.back().term;
+        newTimer.prevLogIndex = log.back().logIndex-1;
+        newTimer.prevLogTerm = log.back().term-1;
         newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
         newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
         newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To perform deep copy
