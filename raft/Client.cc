@@ -37,6 +37,7 @@ class Client : public cSimpleModule
       virtual void handleMessage(cMessage *msg) override;
       void chooseNextRandomOp();
       int chooseRandomServer();
+      void initializeConfiguration();
   };
 
 Define_Module(Client);
@@ -61,6 +62,7 @@ void Client::initialize(){
   requestTimeoutRead = new cMessage("requestTimeoutRead");
   requestTimeoutWrite = new cMessage("requestTimeoutWrite");
 
+  initializeConfiguration();
   chooseNextRandomOp();
 }
 
@@ -73,8 +75,8 @@ void Client::handleMessage(cMessage *msg){
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
     clientCommandRPC->setSequenceNumber(sequenceNumber);
+    clientCommandRPC->setSrcAddress(myAddress);
     char x = 'x';
-    clientCommandRPC->setVar(x);
     clientCommandRPC->setType(READ);
     send(clientCommandRPC, "port$o");
     scheduleAt(simTime() + par("requestTimeout"), requestTimeoutRead);
@@ -87,6 +89,7 @@ void Client::handleMessage(cMessage *msg){
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
     clientCommandRPC->setSequenceNumber(sequenceNumber);
+    clientCommandRPC->setSrcAddress(myAddress);
     char x = 'x';
     clientCommandRPC->setVar(x);
     clientCommandRPC->setValue(value);
@@ -156,10 +159,12 @@ void Client::chooseNextRandomOp(){
   int randomOp = intrand(2);
   if(randomOp == READ){
     lastOperation = READ;
+    EV << "Sending READ command";
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendRead);
   }
   else{
     lastOperation = WRITE;
+    EV << "Sending WRITE command";
     scheduleAt(simTime() + uniform(SimTime(par("lowCommandTimeout")), SimTime(par("highCommandTimeout"))), sendWrite);
     value++;
   }
@@ -169,4 +174,20 @@ void Client::chooseNextRandomOp(){
 int Client::chooseRandomServer(){
   int randomServer = intrand(configuration.size());
   return configuration[randomServer];
+}
+
+void Client::initializeConfiguration(){
+  cModule *Switch = gate("port$i")->getPreviousGate()->getOwnerModule();
+  int moduleAddress;
+  for (int i = 1; i < Switch->gateSize("port$o"); i++){
+    std::string serverString = "server";
+    std::string moduleCheck = Switch->gate("port$o", i)->getNextGate()->getOwnerModule()->getFullName();
+    if (Switch->gate("port$o", i)->isConnected()){
+      if (moduleCheck.find(serverString) != std::string::npos){
+        moduleAddress = Switch->gate("port$o", i)->getId();
+        //EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
+        configuration.push_back(moduleAddress);
+      }
+    }
+  }
 }

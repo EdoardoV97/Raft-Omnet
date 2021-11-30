@@ -31,6 +31,6 @@ network Raft
             client[i].port <--> {  delay = 10ms; } <--> switch.port[i+1];
         }
         for i=0..numServers-1 {
-            server[i].port <--> {  delay = 5ms; } <--> switch.port[numClients+1+i];
+            server[i].port <--> {  delay = 1ms; } <--> switch.port[numClients+1+i];
         }
 }
