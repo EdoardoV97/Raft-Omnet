@@ -91,10 +91,8 @@ class Server : public cSimpleModule
     void sendAck(int destAddress, int seqNum);
     void sendResponseToClient(int type, int clientAddress);
     void startReadOnlyLeaderCheck();
-    //bool checkCommittingConfigWithoutMe();
     bool checkNewServersAreUpToDate();
     void sendHeartbeatToFollower();
-    //bool checkIfServerOnlyNew(int address);
 };
 
 Define_Module(Server);
@@ -155,7 +153,7 @@ void Server::initialize()
 void Server::handleMessage(cMessage *msg)
 {
   if(msg == sendHearthbeat){
-    sendHearthbeatToFollower();
+    sendHeartbeatToFollower();
     return;
   }
 
@@ -262,7 +260,7 @@ void Server::handleMessage(cMessage *msg)
             newConfiguration.assign(pk->getEntry().cNew.begin(), pk->getEntry().cNew.end());
             if (status == NON_VOTING)
             {
-              becomeFollower();
+              becomeFollower(pkGeneric);
             }
             
           }
