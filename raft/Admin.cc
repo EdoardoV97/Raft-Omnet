@@ -120,8 +120,8 @@ void Admin::createNewServer(int index)
 
     cDelayChannel *delayChannelIN = cDelayChannel::create("DelayChannel");
     cDelayChannel *delayChannelOUT = cDelayChannel::create("DelayChannel");
-    delayChannelIN->setDelay(0.01);
-    delayChannelOUT->setDelay(0.01);
+    delayChannelIN->setDelay(0.001);
+    delayChannelOUT->setDelay(0.001);
     newServerPortIN = module->gate("port$i");
     newServerPortOUT = module->gate("port$o");
     newSwitchPortOUT->connectTo(newServerPortIN, delayChannelIN);
@@ -178,10 +178,6 @@ void Admin::sendChangeConfig(bool onlyServer){
   // This mex need to be send to all: both cluster's servers and clients
   for (int i=1; i < Switch->gateSize("port$o"); i++){
     if (Switch->gate("port$o", i)->isConnected()){
-      if(onlyServer == true){
-        std::string serverString = "server";
-        std::string moduleCheck = Switch->gate("port$o", i)->getNextGate()->getOwnerModule()->getFullName();
-        if(moduleCheck.find(serverString) != std::string::npos){
           cluster_configuration newConfig;
           newConfig.servers.assign(configuration.begin(), configuration.end());
           configChangedRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
@@ -190,20 +186,8 @@ void Admin::sendChangeConfig(bool onlyServer){
           configChangedRPC->setClusterConfig(newConfig);
           configChangedRPC->setSequenceNumber(sequenceNumber);
           configChangedRPC->setVar('C');
+          configChangedRPC->setType(1); // Mark as write
           send(configChangedRPC, "port$o");
-        }
-      }
-      else{
-        cluster_configuration newConfig;
-        newConfig.servers.assign(configuration.begin(), configuration.end());
-        configChangedRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
-        configChangedRPC->setSrcAddress(myAddress);
-        configChangedRPC->setDestAddress(Switch->gate("port$o", i)->getId());
-        configChangedRPC->setClusterConfig(newConfig);
-        configChangedRPC->setSequenceNumber(sequenceNumber);
-        configChangedRPC->setVar('C');
-        send(configChangedRPC, "port$o");
-      }
     }
   }
   scheduleAt(simTime() + par("resendTimer"), resendTimer);

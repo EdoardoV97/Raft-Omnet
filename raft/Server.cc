@@ -596,7 +596,6 @@ void Server::handleMessage(cMessage *msg)
       
       if(pk->getType() == WRITE){
         if(pk->getVar() == 'C'){ // If a config change mex
-          adminAddress = pk->getSrcAddress();
           newConfiguration.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
           // Initializing nextIndexNewConfig and matchIndexNewConfig to manage servers in the newConfiguration
           nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex + 1);
