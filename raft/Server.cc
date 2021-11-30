@@ -636,6 +636,9 @@ void Server::handleMessage(cMessage *msg)
       }
     }
     else{ //Redirect the client to the last known leader
+      if(pk->getSrcAddress() == adminAddress){
+        break;
+      }
       clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
       clientCommandResponseRPC->setRedirect(true);
       clientCommandResponseRPC->setLastKnownLeader(leaderAddress); //the client will check if it is -1; thus no Leader because startup of the cluster

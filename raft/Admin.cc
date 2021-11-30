@@ -77,6 +77,7 @@ void Admin::handleMessage(cMessage *msg)
               toPurge.push_back(purgedAddress);
               EV << "Added ID: " << purgedAddress << " to toPurge Vector" << endl;
               configuration.erase(configuration.begin() + configuration.size() - 1 - numberOfNewServers);
+              Switch->gate(purgedAddress)->getNextGate()->getOwnerModule()->getDisplayString().setTagArg("i", 1, "grey");
             }
             // 3) Now we can inform the clients of the change, and the cluster, knowing that only leader will keep this mex
             //    Note that clients will still try to send mex to servers in toPurge vector, since these servers will be effectively
@@ -129,6 +130,7 @@ void Admin::createNewServer(int index)
     // create internals, and schedule it
     module->buildInside();
     module->par("instantieatedAtRunTime").setBoolValue(true);
+    module->getDisplayString().setTagArg("i", 1, "green");
     module->callInitialize();
 }
 
