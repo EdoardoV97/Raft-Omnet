@@ -60,7 +60,7 @@ void Admin::handleMessage(cMessage *msg)
           numberOfNewServers--;
 
           // Repeat the add server procedure
-          scheduleAt(simTime() + par("delay"), changeConfig);
+          scheduleAt(simTime(), changeConfig);
         }
         else if (numberOfNewServers == 0) {
             // We have added all the new servers, so update the config

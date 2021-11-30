@@ -20,7 +20,6 @@ Define_Module(Switch);
 
 void Switch::activity()
 {
-    int queueMaxLen = (int)par("queueMaxLen");
     int destAddress;
     cQueue queue("queue");
     for ( ; ; ) {

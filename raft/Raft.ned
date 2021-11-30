@@ -9,17 +9,14 @@ network Raft
     submodules:
         admin: Admin{
             parameters:
-                @display("p=90,70");
+                @display("p=70,40");
         }
-        client: Client {
+        client[numClients]: Client {
             parameters:
-                requestTimeout = 5s;
-                @display("p=210,70");
+                @display("p=210,70,m,10,80");
         }
         switch: Switch {
             parameters:
-                delay = 0.005s;
-                queueMaxLen = 100; // buffer max 100 packets
                 @display("p=210,170");
             gates:
                 port[numServers+numClients+1]; // 1 extra port for the admin
@@ -29,13 +26,11 @@ network Raft
                 @display("p=70,270,m,10,80");
         }
     connections:
-        for i=0..numServers-1 {
-            server[i].port <--> {  delay = 5ms; } <--> switch.port[numClients+1];
-        }
-        for i=1..numClients {
-            client.port <--> {  delay = 10ms; } <--> switch.port[i];
-        }
         admin.port <--> switch.port[0];
+        for i=0..numClients-1 {
+            client[i].port <--> {  delay = 10ms; } <--> switch.port[i+1];
+        }
+        for i=0..numServers-1 {
+            server[i].port <--> {  delay = 5ms; } <--> switch.port[numClients+1+i];
+        }
 }
-
-
