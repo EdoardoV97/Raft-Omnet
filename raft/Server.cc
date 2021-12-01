@@ -130,7 +130,6 @@ void Server::initialize()
   WATCH(x);
   WATCH(currentTerm);
   WATCH(votedFor);
-  //WATCH_RW(log);
   WATCH(commitIndex);
   WATCH(lastApplied);
   
@@ -143,6 +142,7 @@ void Server::initialize()
 
   initializeConfiguration();
   newConfiguration.assign(configuration.begin(), configuration.end());
+
   if (par("instantieatedAtRunTime"))
   {
     status = NON_VOTING;
@@ -150,7 +150,7 @@ void Server::initialize()
     newConfiguration.clear();
     return;
   }
-  
+
   //Pushing the initial configuration in the log
   log_entry firstEntry;
   firstEntry.var = 'C';
@@ -179,6 +179,7 @@ void Server::handleMessage(cMessage *msg)
   
   if(msg == minElectionTimeoutEvent){
     believeCurrentLeaderExists = false;
+    return;
   }
 
   // Retry append entries if an appendEntryTimer is fired 
@@ -227,7 +228,9 @@ void Server::handleMessage(cMessage *msg)
       //1) Reply false if term < currentTerm 2)Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm 
       // To avoid out of bound access
       bool partialEval = false;
+      EV << pk->getPrevLogIndex() << "<" << log.size() << endl;
       if(pk->getPrevLogIndex() < log.size()){
+        EV << log[pk->getPrevLogIndex()].term << "!=" << pk->getPrevLogTerm() << endl;
         if(log[pk->getPrevLogIndex()].term != pk->getPrevLogTerm()){
           partialEval = true;
         }
@@ -384,28 +387,29 @@ void Server::handleMessage(cMessage *msg)
 
       if(pk->getSuccess() == false){
         int position;
-        int nextEntryIndex;
+        int entryIndex;
         log_entry newEntry;
         // If membership change is occurring
         if(configuration != newConfiguration){
+          // If response come from a not new server
           if(getIndex(configuration, pk->getSrcAddress()) != -1){
             position = getIndex(configuration, pk->getSrcAddress());
-            nextEntryIndex = --nextIndex[position]; // first decrement and then save in the variable
+            entryIndex = --nextIndex[position]; // first decrement and then save in the variable
             // If it is also in newConfiguration manage to decrement also in nextIndexNewConfig
             if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
               --nextIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())];
             }        
           }
-          else{
+          else{ // I response come from a new server
             position = getIndex(newConfiguration, pk->getSrcAddress());
-            nextEntryIndex = --nextIndexNewConfig[position];
+            entryIndex = --nextIndexNewConfig[position];
           }
         }
         else{ // Not membership change occurring
           position = getIndex(configuration, pk->getSrcAddress());
-          nextEntryIndex = --nextIndex[position];
+          entryIndex = --nextIndex[position];
         }
-        newEntry = log[nextEntryIndex];
+        newEntry = log[entryIndex];
         if(newEntry.var == 'C'){  
           newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
           newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -414,22 +418,22 @@ void Server::handleMessage(cMessage *msg)
       }
       else{ //Success == true
         int position;
-        int nextEntryIndex;
+        int entryIndex;
         // If membership change is occurring
         if(configuration != newConfiguration){
           if(getIndex(configuration, pk->getSrcAddress()) != -1){
             position = getIndex(configuration, pk->getSrcAddress());
             matchIndex[position] = nextIndex[position];
-            nextEntryIndex = ++nextIndex[position];
+            entryIndex = ++nextIndex[position];
             
             if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
               ++nextIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())];
               ++matchIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())];
             }
 
-            if(nextEntryIndex < log.size()){
+            if(entryIndex < log.size()){
               log_entry newEntry;
-              newEntry = log[nextEntryIndex];
+              newEntry = log[entryIndex];
               if(newEntry.var == 'C'){  
                 newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
                 newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -440,10 +444,10 @@ void Server::handleMessage(cMessage *msg)
           else{
             position = getIndex(newConfiguration, pk->getSrcAddress());
             matchIndexNewConfig[position] = nextIndexNewConfig[position];
-            nextEntryIndex = ++nextIndexNewConfig[position]; 
+            entryIndex = ++nextIndexNewConfig[position]; 
             if(nextIndexNewConfig[position] < log.size()){
               log_entry newEntry;
-              newEntry = log[nextEntryIndex];
+              newEntry = log[entryIndex];
               if(newEntry.var == 'C'){  
                 newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
                 newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -478,10 +482,10 @@ void Server::handleMessage(cMessage *msg)
         else{ // Not membership change occurring
           position = getIndex(configuration, pk->getSrcAddress());
           matchIndex[position] = nextIndex[position];
-          nextEntryIndex = ++nextIndex[position]; 
-          if(nextEntryIndex < log.size()){
+          entryIndex = ++nextIndex[position]; 
+          if(entryIndex < log.size()){
             log_entry newEntry;
-            newEntry = log[nextEntryIndex];
+            newEntry = log[entryIndex];
             if(newEntry.var == 'C'){  
               newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
               newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -610,7 +614,7 @@ void Server::handleMessage(cMessage *msg)
         if(pk->getVar() == 'C'){ // If a config change mex
           newConfiguration.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
           // Initializing nextIndexNewConfig and matchIndexNewConfig to manage servers in the newConfiguration
-          nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex + 1);
+          nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex);
           matchIndexNewConfig.resize(newConfiguration.size(), 0);
           newServersCanVote = false;
           log_entry newEntry;
@@ -744,6 +748,9 @@ void Server::appendNewEntry(log_entry newEntry){
       appendEntriesRPC->setDestAddress(configuration[i]);
 
       pk_copy = appendEntriesRPC->dup();
+      if(newEntry.var=='N'){
+        pk_copy->setDisplayString("b=10,10,rect,kind,kind,1");
+      }
       send(pk_copy, "port$o");
       
       appendEntryTimers.push_back(newTimer);
@@ -767,7 +774,14 @@ void Server::appendNewEntry(log_entry newEntry){
         newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
         appendEntriesRPC->setDestAddress(newConfiguration[i]);
 
+        EV << "New Entry: Index=" << newEntry.logIndex
+        << " Term=" << newEntry.term
+        << " value" << newEntry.value
+        << endl;
         pk_copy = appendEntriesRPC->dup();
+        if(newEntry.var=='N'){
+          pk_copy->setDisplayString("b=10,10,rect,kind,kind,1");
+        }
         send(pk_copy, "port$o");
         
         appendEntryTimers.push_back(newTimer);
@@ -789,10 +803,20 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   appendEntriesRPC->setLeaderId(myAddress);
   // If NOT membership change occurring OR if it is occurring but the destination is in configuration
   if((configuration == newConfiguration) || (configuration != newConfiguration && getIndex(configuration, destAddress) != -1)){
-    appendEntriesRPC->setPrevLogIndex(log[nextIndex[index]-1].logIndex); // -1 because the previous
-    appendEntriesRPC->setPrevLogTerm(log[nextIndex[index]-1].term);
+    if((newEntry.logIndex)==0){
+      appendEntriesRPC->setPrevLogIndex(-1); // -1 because the previous
+      appendEntriesRPC->setPrevLogTerm(0);
+    }
+    else{
+      appendEntriesRPC->setPrevLogIndex(log[nextIndex[index]-1].logIndex); // -1 because the previous
+      appendEntriesRPC->setPrevLogTerm(log[nextIndex[index]-1].term);
+    }
   }
   else{ // A membership change is occurring and the destination is ONLY in newConfiguration (by exclusion from the IF case above)
+    if(newEntry.logIndex==0){
+      appendEntriesRPC->setPrevLogIndex(-1); // -1 because the previous
+      appendEntriesRPC->setPrevLogTerm(0);
+    }
     appendEntriesRPC->setPrevLogIndex(log[nextIndexNewConfig[index]-1].logIndex); // -1 because the previous
     appendEntriesRPC->setPrevLogTerm(log[nextIndexNewConfig[index]-1].term);   
   }
@@ -1158,6 +1182,7 @@ void Server::sendHeartbeatToFollower(){
         }else{
           appendEntriesRPC->setHeartbeatSeqNum(-1);
         }
+        appendEntriesRPC->setDisplayString("b=7,7,oval,blue,black,1");
         send(appendEntriesRPC, "port$o");
       }
     }
@@ -1222,7 +1247,7 @@ void Server::refreshDisplay() const
       break;
     }
     const char *c = s.c_str();
-    sprintf(buf, "s: %s  Term: %d  x: %d", c, currentTerm, x);
+    sprintf(buf, "s: %s  Term: %d  x: %d, size: %ld", c, currentTerm, x, log.size());
     getDisplayString().setTagArg("t", 0, buf);
 
     if (status == LEADER){
