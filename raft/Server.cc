@@ -104,7 +104,11 @@ Define_Module(Server);
 Server::~Server()
 {
   cancelAndDelete(sendHearthbeat);
-  //TODO: eliminate others
+  cancelAndDelete(electionTimeoutEvent);
+  cancelAndDelete(minElectionTimeoutEvent);
+  for (int i = 0; i < appendEntryTimers.size() ; i++){
+    cancelAndDelete(appendEntryTimers[i].timeoutEvent);
+  }
 }
 
 void Server::initialize()
@@ -408,7 +412,7 @@ void Server::handleMessage(cMessage *msg)
         }
         appendNewEntryTo(newEntry, receiverAddress, position);
       }
-      else{
+      else{ //Success == true
         int position;
         int nextEntryIndex;
         // If membership change is occurring
@@ -1128,6 +1132,7 @@ void Server::sendHeartbeatToFollower(){
       }else{
         appendEntriesRPC->setHeartbeatSeqNum(-1);
       }
+      appendEntriesRPC->setDisplayString("b=7,7,oval,blue,black,1");
       send(appendEntriesRPC, "port$o");
     }
   }
@@ -1221,7 +1226,7 @@ void Server::refreshDisplay() const
     getDisplayString().setTagArg("t", 0, buf);
 
     if (status == LEADER){
-      getDisplayString().setTagArg("i", 0, "device/server2");
+      getDisplayString().setTagArg("t", 2, "green");
       //getDisplayString().setTagArg("i2", 0, "status/busy");
     }
 }

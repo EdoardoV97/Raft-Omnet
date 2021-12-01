@@ -23,6 +23,7 @@ packet RPCPacket
     int srcAddress;
     int destAddress;
     bool isBroadcast = false;
+    string displayString = "b=10,10,oval,kind,kind,1";
 };
 
 packet RPCClientCommandPacket extends RPCPacket{
