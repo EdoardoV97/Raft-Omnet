@@ -78,7 +78,7 @@ class Server : public cSimpleModule
     virtual void refreshDisplay() const override;
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;
-    void appendNewEntry(log_entry newEntry);
+    void appendNewEntry(log_entry newEntry, bool onlyToNewServers);
     int getIndex(vector<int> v, int K);
     void appendNewEntryTo(log_entry newEntry, int destAddress, int index);
     bool majority(int N);
@@ -522,7 +522,7 @@ void Server::handleMessage(cMessage *msg)
                   // implicitly newEntry.cOld is empty (Convention: it means that it is the Cnew entry)
                   newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
                   log.push_back(newEntry);
-                  appendNewEntry(newEntry);
+                  appendNewEntry(newEntry, false);
                 }
                 else{ //If Cnew is now committed (second phase is terminated)
                   configuration.assign(newConfiguration.begin(), newConfiguration.end());
@@ -621,7 +621,7 @@ void Server::handleMessage(cMessage *msg)
           newEntry = log.back();
           newEntry.cOld.assign(log.back().cOld.begin(), log.back().cOld.end());
           newEntry.cNew.assign(log.back().cNew.begin(), log.back().cNew.end());
-          appendNewEntry(newEntry);
+          appendNewEntry(newEntry, true);
           return;
         } 
         log_entry newEntry;
@@ -634,7 +634,7 @@ void Server::handleMessage(cMessage *msg)
         matchIndex[getIndex(configuration, myAddress)]++;
         
         cancelEvent(sendHearthbeat);
-        appendNewEntry(newEntry);
+        appendNewEntry(newEntry, false);
         scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);      
       }
       else{ // READ case
@@ -718,7 +718,7 @@ void Server::handleMessage(cMessage *msg)
     
 }
 
-void Server::appendNewEntry(log_entry newEntry){
+void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
   RPCPacket *pk_copy;
   clients_data temp;
   temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
@@ -733,31 +733,34 @@ void Server::appendNewEntry(log_entry newEntry){
   appendEntriesRPC->setClientsData(temp);
   appendEntriesRPC->setSrcAddress(myAddress);
   
-  //Send to all followers in the configuration
-  for (int i = 0; i < configuration.size(); i++){
-    // If to avoid sending to myself
-    if(configuration[i] != myAddress){
-      append_entry_timer newTimer;
-      newTimer.destination = configuration[i];
-      newTimer.prevLogIndex = log.back().logIndex -1;
-      newTimer.prevLogTerm = log[log.size()-2].term;
-      newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
-      newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
-      newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To deep copy
-      newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
-      appendEntriesRPC->setDestAddress(configuration[i]);
+  if (onlyToNewServers == false){
+    //Send to all followers in the configuration
+    for (int i = 0; i < configuration.size(); i++){
+      // If to avoid sending to myself
+      if(configuration[i] != myAddress){
+        append_entry_timer newTimer;
+        newTimer.destination = configuration[i];
+        newTimer.prevLogIndex = log.back().logIndex -1;
+        newTimer.prevLogTerm = log[log.size()-2].term;
+        newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
+        newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
+        newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To deep copy
+        newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+        appendEntriesRPC->setDestAddress(configuration[i]);
 
-      pk_copy = appendEntriesRPC->dup();
-      if(newEntry.var=='N'){
-        pk_copy->setDisplayString("b=10,10,rect,kind,kind,1");
+        pk_copy = appendEntriesRPC->dup();
+        if(newEntry.var=='N'){
+          pk_copy->setDisplayString("b=10,10,rect,kind,kind,1");
+        }
+        send(pk_copy, "port$o");
+        
+        appendEntryTimers.push_back(newTimer);
+        // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
+        scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
       }
-      send(pk_copy, "port$o");
-      
-      appendEntryTimers.push_back(newTimer);
-      // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
-      scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
     }
   }
+  
   // If a membership change is occurring
   if(configuration != newConfiguration){
     // Send to all followers in newConfiguration
