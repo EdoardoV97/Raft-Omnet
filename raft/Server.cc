@@ -143,14 +143,6 @@ void Server::initialize()
   initializeConfiguration();
   newConfiguration.assign(configuration.begin(), configuration.end());
 
-  if (par("instantieatedAtRunTime"))
-  {
-    status = NON_VOTING;
-    configuration.clear();
-    newConfiguration.clear();
-    return;
-  }
-
   //Pushing the initial configuration in the log
   log_entry firstEntry;
   firstEntry.var = 'C';
@@ -158,6 +150,14 @@ void Server::initialize()
   firstEntry.logIndex = 0;
   firstEntry.cNew.assign(configuration.begin(), configuration.end());
   log.push_back(firstEntry);
+
+  if (par("instantieatedAtRunTime"))
+  {
+    status = NON_VOTING;
+    configuration.clear();
+    newConfiguration.clear();
+    return;
+  }
   scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
 
@@ -473,7 +473,7 @@ void Server::handleMessage(cMessage *msg)
                 }
                 newServersCanVote = true;
                 cancelEvent(sendHearthbeat);
-                appendNewEntry(newEntry);
+                appendNewEntry(newEntry, false);
                 scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); 
               }
             }
@@ -622,7 +622,7 @@ void Server::handleMessage(cMessage *msg)
           newEntry.cOld.assign(log.back().cOld.begin(), log.back().cOld.end());
           newEntry.cNew.assign(log.back().cNew.begin(), log.back().cNew.end());
           appendNewEntry(newEntry, true);
-          return;
+          break;
         } 
         log_entry newEntry;
         newEntry.term = currentTerm;
@@ -806,20 +806,10 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   appendEntriesRPC->setLeaderId(myAddress);
   // If NOT membership change occurring OR if it is occurring but the destination is in configuration
   if((configuration == newConfiguration) || (configuration != newConfiguration && getIndex(configuration, destAddress) != -1)){
-    if((newEntry.logIndex)==0){
-      appendEntriesRPC->setPrevLogIndex(-1); // -1 because the previous
-      appendEntriesRPC->setPrevLogTerm(0);
-    }
-    else{
-      appendEntriesRPC->setPrevLogIndex(log[nextIndex[index]-1].logIndex); // -1 because the previous
-      appendEntriesRPC->setPrevLogTerm(log[nextIndex[index]-1].term);
-    }
+    appendEntriesRPC->setPrevLogIndex(log[nextIndex[index]-1].logIndex); // -1 because the previous
+    appendEntriesRPC->setPrevLogTerm(log[nextIndex[index]-1].term);
   }
   else{ // A membership change is occurring and the destination is ONLY in newConfiguration (by exclusion from the IF case above)
-    if(newEntry.logIndex==0){
-      appendEntriesRPC->setPrevLogIndex(-1); // -1 because the previous
-      appendEntriesRPC->setPrevLogTerm(0);
-    }
     appendEntriesRPC->setPrevLogIndex(log[nextIndexNewConfig[index]-1].logIndex); // -1 because the previous
     appendEntriesRPC->setPrevLogTerm(log[nextIndexNewConfig[index]-1].term);   
   }
@@ -1014,7 +1004,7 @@ void Server::becomeLeader(){
   newEntry.logIndex = log.size();
   newEntry.var = 'N';
   log.push_back(newEntry);
-  appendNewEntry(newEntry);
+  appendNewEntry(newEntry, false);
 
   scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); // Schedule the sendHeartbeat
 }
