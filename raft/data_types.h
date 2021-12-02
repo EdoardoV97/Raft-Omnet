@@ -52,3 +52,15 @@ enum serverState
     CANDIDATE = 2,
     NON_VOTING = 3,
 };
+
+struct snapshot_file 
+{
+    int lastIncludedIndex;
+    int lastIncludedTerm;
+    // State machine state
+    char var;
+    int value;
+    // Last known config
+    vector<int> oldConfiguration;
+    vector<int> newConfiguration;
+};
