@@ -8,12 +8,20 @@ struct latest_client_response
     int clientAddress;
     int latestSequenceNumber;
     int latestReponseToClient;
+    int currentSequenceNumber;
 };
 
 struct cluster_configuration
 {
     vector<int> servers;
 };
+
+struct lastRPC
+{
+    bool success = false;
+    int sequenceNumber = -1;
+};
+
 
 
 struct log_entry

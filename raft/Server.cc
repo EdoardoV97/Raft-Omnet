@@ -26,6 +26,7 @@ class Server : public cSimpleModule
     
     int myAddress;   // This is the server ID
     int receiverAddress; // This is receiver server ID (for utility)
+    int adminAddress;  // This is the admin address ID
     
     int votes = 0; // This is the number of received votes by servers in the configuration (meaninful when status = candidate). It refers to member in the "old" configuration when a membership change in occurring.
     int votesNewConfig = 0; // This is the number of received votes by servers in the "new" configuration (meaninful when status = candidate) when a membership change in occurring.
@@ -41,8 +42,8 @@ class Server : public cSimpleModule
     bool believeCurrentLeaderExists = false;
     bool newServersCanVote = true;
     bool iAmCrashed = false;
-
-    int adminAddress;  // This is the admin address ID
+    vector<lastRPC> RPCs; // Track the latest RPC ("sequenceNumber" and "success", to reproduce blocking RPC) for all messages to other servers (meaningful for leader and candidate status).
+    vector<lastRPC> RPCsNewConfig;
 
     // Pointers to handle RPC mexs
     RPCAppendEntriesPacket *appendEntriesRPC = nullptr;
@@ -139,19 +140,22 @@ void Server::initialize()
   WATCH(votedFor);
   WATCH(commitIndex);
   WATCH(lastApplied);
-  
   WATCH_VECTOR(nextIndex);
   WATCH_VECTOR(matchIndex);
   WATCH_VECTOR(matchIndexNewConfig);
   WATCH_VECTOR(nextIndexNewConfig);
-
   WATCH(status);
   WATCH(newServersCanVote);
-
   WATCH(log);
 
+  // Initialize the initial configuration
   initializeConfiguration();
   newConfiguration.assign(configuration.begin(), configuration.end());
+  // Initialize the RPCs
+  RPCs.resize(configuration.size());
+  RPCsNewConfig.resize(configuration.size());
+
+  
 
   //Pushing the initial configuration in the log
   log_entry firstEntry;
@@ -212,6 +216,14 @@ void Server::handleMessage(cMessage *msg)
     newServersCanVote = true;
     //The replay of all the log will be triggered automatically from the protocol
     iAmCrashed = false;
+
+    // Reset to follower state only if it was NOT a NON_VOTING server.
+    // "Status" is for the check even if it is supposed to be not saved after a crash, but only for simplicity of simulating
+    // in fact, we can suppose that a NON_VOTING server will be recovered after a crash and turned in the same NON_VOTING state for coherence by an "admin"
+    if(status != NON_VOTING){
+      status = FOLLOWER;
+      // TODO become follower and set variables..., not call the method!
+    }
     return;
   }
   
@@ -238,11 +250,12 @@ void Server::handleMessage(cMessage *msg)
   // Retry append entries if an appendEntryTimer is fired 
   for (int i = 0; i < appendEntryTimers.size() ; i++){
     if (msg == appendEntryTimers[i].timeoutEvent){
+      // Re-craft the entry
       log_entry newEntry = appendEntryTimers[i].entry;
       newEntry.cOld.assign(appendEntryTimers[i].entry.cOld.begin(), appendEntryTimers[i].entry.cOld.end());
       newEntry.cNew.assign(appendEntryTimers[i].entry.cNew.begin(), appendEntryTimers[i].entry.cNew.end());
       newEntry.clientsData.assign(appendEntryTimers[i].entry.clientsData.begin(), appendEntryTimers[i].entry.clientsData.end());
-      //Resend the message
+      //Create the message
       appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
       appendEntriesRPC->setTerm(currentTerm);
       appendEntriesRPC->setLeaderId(myAddress);
@@ -251,9 +264,26 @@ void Server::handleMessage(cMessage *msg)
       appendEntriesRPC->setEntry(newEntry);
       appendEntriesRPC->setLeaderCommit(commitIndex);
       appendEntriesRPC->setSrcAddress(myAddress);
-      appendEntriesRPC->setIsBroadcast(false);
       appendEntriesRPC->setDestAddress(appendEntryTimers[i].destination);
+      
+      // Increment the latest sequence number associated to the destination and send.
+      if (configuration != newConfiguration)
+      {
+        if (getIndex(configuration, appendEntryTimers[i].destination) != -1){
+          RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
+          appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber);
+        }
+        if (getIndex(newConfiguration, appendEntryTimers[i].destination) != -1){
+          RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber++;
+          appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber);
+        }
+      }
+      else{
+        RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
+        appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber);
+      }
       send(appendEntriesRPC, "port$o");
+      
       //Reset timer
       scheduleAt(simTime() + par("resendTimeout"), appendEntryTimers[i].timeoutEvent);
       return;
@@ -293,6 +323,7 @@ void Server::handleMessage(cMessage *msg)
         appendEntriesResponseRPC->setTerm(currentTerm);
         appendEntriesResponseRPC->setSrcAddress(myAddress);
         appendEntriesResponseRPC->setDestAddress(receiverAddress);
+        appendEntriesResponseRPC->setSequenceNumber(pk->getSequenceNumber());
         send(appendEntriesResponseRPC, "port$o");
         }
       else {
@@ -333,6 +364,7 @@ void Server::handleMessage(cMessage *msg)
         appendEntriesResponseRPC->setTerm(currentTerm);
         appendEntriesResponseRPC->setSrcAddress(myAddress);
         appendEntriesResponseRPC->setDestAddress(receiverAddress);
+        appendEntriesResponseRPC->setSequenceNumber(pk->getSequenceNumber());
         send(appendEntriesResponseRPC, "port$o");
       }
       scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
@@ -360,8 +392,8 @@ void Server::handleMessage(cMessage *msg)
                 commitIndex = pk->getEntry().logIndex;
               }
             }
-            if(pk->getHeartbeatSeqNum() != -1){
-              sendAck(pk->getSrcAddress(), pk->getHeartbeatSeqNum());
+            if(pk->getWithAck() == true){
+              sendAck(pk->getSrcAddress(), pk->getSequenceNumber());
             }
             latestClientResponses.assign(pk->getEntry().clientsData.begin(), pk->getEntry().clientsData.end());
             scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
@@ -390,6 +422,7 @@ void Server::handleMessage(cMessage *msg)
       requestVoteResponseRPC->setTerm(currentTerm);
       requestVoteResponseRPC->setSrcAddress(myAddress);
       requestVoteResponseRPC->setDestAddress(receiverAddress);
+      requestVoteResponseRPC->setSequenceNumber(pk->getSequenceNumber());
       send(requestVoteResponseRPC, "port$o");
     } else{
       //2)If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote.
@@ -402,6 +435,7 @@ void Server::handleMessage(cMessage *msg)
           requestVoteResponseRPC->setTerm(currentTerm);
           requestVoteResponseRPC->setSrcAddress(myAddress);
           requestVoteResponseRPC->setDestAddress(receiverAddress);
+          requestVoteResponseRPC->setSequenceNumber(pk->getSequenceNumber());
           send(requestVoteResponseRPC, "port$o");
           scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
         }
@@ -412,6 +446,7 @@ void Server::handleMessage(cMessage *msg)
         requestVoteResponseRPC->setTerm(currentTerm);
         requestVoteResponseRPC->setSrcAddress(myAddress);
         requestVoteResponseRPC->setDestAddress(receiverAddress);
+        requestVoteResponseRPC->setSequenceNumber(pk->getSequenceNumber());
         send(requestVoteResponseRPC, "port$o");
       }
     }
@@ -423,10 +458,8 @@ void Server::handleMessage(cMessage *msg)
     if(status == LEADER){
       receiverAddress = pk->getSrcAddress();
       // If a very late message coming from someone from before a membership change already completed (which didn't include him in the new configuration)
-      if (getIndex(configuration, receiverAddress) == -1 && getIndex(newConfiguration, receiverAddress) == -1)
-      {
-        break;
-      }
+      if (getIndex(configuration, receiverAddress) == -1 && getIndex(newConfiguration, receiverAddress) == -1){break;}
+      
       for(int i=0; i < appendEntryTimers.size() ; i++){
         if (receiverAddress == appendEntryTimers[i].destination){
           cancelEvent(appendEntryTimers[i].timeoutEvent);
@@ -442,20 +475,20 @@ void Server::handleMessage(cMessage *msg)
         // If membership change is occurring
         if(configuration != newConfiguration){
           // If response come from a not new server
-          if(getIndex(configuration, pk->getSrcAddress()) != -1){
-            position = getIndex(configuration, pk->getSrcAddress());
+          if(getIndex(configuration, receiverAddress) != -1){
+            position = getIndex(configuration, receiverAddress);
             // Avoid next entry to send is out of bound
             entryIndex = nextIndex[position];
             if (entryIndex > 0){
               entryIndex = --nextIndex[position]; // first decrement and then save in the variable
               // If it is also in newConfiguration manage to decrement also in nextIndexNewConfig
-              if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
-                --nextIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())];
+              if(getIndex(newConfiguration, receiverAddress) != -1){
+                --nextIndexNewConfig[getIndex(newConfiguration, receiverAddress)];
               }   
             }     
           }
           else{ // If response come from a new server
-            position = getIndex(newConfiguration, pk->getSrcAddress());
+            position = getIndex(newConfiguration, receiverAddress);
             // Avoid next entry to send is out of bound
             entryIndex = nextIndexNewConfig[position];
             if (entryIndex > 0){
@@ -464,7 +497,7 @@ void Server::handleMessage(cMessage *msg)
           }
         }
         else{ // Not membership change occurring
-          position = getIndex(configuration, pk->getSrcAddress());
+          position = getIndex(configuration, receiverAddress);
           // Avoid next entry to send is out of bound
           entryIndex = nextIndexNewConfig[position];
           if (entryIndex > 0){
@@ -484,20 +517,20 @@ void Server::handleMessage(cMessage *msg)
         int entryIndex;
         // If membership change is occurring
         if(configuration != newConfiguration){
-          if(getIndex(configuration, pk->getSrcAddress()) != -1){
-            position = getIndex(configuration, pk->getSrcAddress());
+          if(getIndex(configuration, receiverAddress) != -1){
+            position = getIndex(configuration, receiverAddress);
             entryIndex = nextIndex[position];
             matchIndex[position] = nextIndex[position];
-            if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
-              matchIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())] = matchIndex[position];
+            if(getIndex(newConfiguration, receiverAddress) != -1){
+              matchIndexNewConfig[getIndex(newConfiguration, receiverAddress)] = matchIndex[position];
             }
             if(entryIndex < log.size()){
               // Update the matchIndex and the NextIndex of the server who send the leader the response
               nextIndex[position]++;
               entryIndex++;
             
-              if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
-                nextIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())] = nextIndex[position];
+              if(getIndex(newConfiguration, receiverAddress) != -1){
+                nextIndexNewConfig[getIndex(newConfiguration, receiverAddress)] = nextIndex[position];
               }
               if (entryIndex<log.size()){
                 log_entry newEntry;
@@ -512,7 +545,7 @@ void Server::handleMessage(cMessage *msg)
             }
           }
           else{
-            position = getIndex(newConfiguration, pk->getSrcAddress());
+            position = getIndex(newConfiguration, receiverAddress);
             entryIndex = nextIndexNewConfig[position]; 
             matchIndexNewConfig[position] = nextIndexNewConfig[position];
             if(entryIndex < log.size()){
@@ -555,7 +588,7 @@ void Server::handleMessage(cMessage *msg)
           }
         }
         else{ // Not membership change occurring
-          position = getIndex(configuration, pk->getSrcAddress());
+          position = getIndex(configuration, receiverAddress);
           entryIndex = nextIndex[position]; 
           //matchIndex[position] = nextIndex[position];
           if(entryIndex < log.size()){
@@ -638,6 +671,7 @@ void Server::handleMessage(cMessage *msg)
   case RPC_REQUEST_VOTE_RESPONSE:
   {
     RPCRequestVoteResponsePacket *pk = check_and_cast<RPCRequestVoteResponsePacket *>(pkGeneric);
+    int sender = pk->getSrcAddress();
     //If i am still candidate
     if(status == CANDIDATE){
       // If the vote is granted
@@ -645,18 +679,21 @@ void Server::handleMessage(cMessage *msg)
         // If there a membership change is NOT occurring
         if (newConfiguration == configuration){
           // If the vote is granted by a server in configuration (to manage case in which before a membership change, some new servers are added but the process is not started and an election is going on)
-          if(getIndex(configuration, pk->getSrcAddress()) != -1){
+          if(getIndex(configuration, sender) != -1 && RPCs[getIndex(configuration, sender)].sequenceNumber == pk->getSequenceNumber()){
             votes++;
+            RPCs[getIndex(configuration, sender)].success = true;
           }
         }
         else{ // If a membership change IS occurring
           // If the vote is granted by a server in configuration
-          if(getIndex(configuration, pk->getSrcAddress()) != -1){
+          if(getIndex(configuration, sender) != -1 && RPCs[getIndex(configuration, sender)].sequenceNumber == pk->getSequenceNumber()){
             votes++;
+            RPCs[getIndex(configuration, sender)].success = true;
           }
           // If the vote is granted by a server in newConfiguration (note: a server can be in both new and old configurations)
-          if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
+          if(getIndex(newConfiguration, sender) != -1 && RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == pk->getSequenceNumber()){
             votesNewConfig++;
+            RPCsNewConfig[getIndex(newConfiguration, sender)].success = true;
           }
         }
       }
@@ -678,28 +715,45 @@ void Server::handleMessage(cMessage *msg)
   case RPC_CLIENT_COMMAND:
   {
     RPCClientCommandPacket *pk = check_and_cast<RPCClientCommandPacket *>(pkGeneric);
+    bool ret=false;
     //Process incoming command from a client
     if(status == LEADER){ 
       // If request already served
       for(int i=0; i < latestClientResponses.size(); i++){
-        if(latestClientResponses[i].clientAddress == pk->getSrcAddress() && latestClientResponses[i].latestSequenceNumber == pk->getSequenceNumber()){
-          clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
-          clientCommandResponseRPC->setSequenceNumber(latestClientResponses[i].latestSequenceNumber);
-          clientCommandResponseRPC->setValue(latestClientResponses[i].latestReponseToClient); // If it was not a read, it is not a problem, the client simply would ignore this field by himself which has no meaning
-          clientCommandResponseRPC->setSrcAddress(myAddress);
-          clientCommandResponseRPC->setDestAddress(latestClientResponses[i].clientAddress);
-          send(clientCommandResponseRPC, "port$o");
-          break;
-        }
+        if(latestClientResponses[i].clientAddress == pk->getSrcAddress()){
+          if(latestClientResponses[i].latestSequenceNumber == pk->getSequenceNumber()){
+            clientCommandResponseRPC = new RPCClientCommandResponsePacket("RPC_CLIENT_COMMAND_RESPONSE", RPC_CLIENT_COMMAND_RESPONSE);
+            clientCommandResponseRPC->setSequenceNumber(latestClientResponses[i].latestSequenceNumber);
+            clientCommandResponseRPC->setValue(latestClientResponses[i].latestReponseToClient); // If it was not a read, it is not a problem, the client simply would ignore this field by himself which has no meaning
+            clientCommandResponseRPC->setSrcAddress(myAddress);
+            clientCommandResponseRPC->setDestAddress(latestClientResponses[i].clientAddress);
+            send(clientCommandResponseRPC, "port$o");
+            ret = true;
+            break; // exit from the for
+          }
+          else{
+            // If command was already received but not yet completed, simply ignore
+            if (latestClientResponses[i].currentSequenceNumber == pk->getSequenceNumber()){
+              ret = true;
+              break; // exit from the for
+            }
+            else{
+              latestClientResponses[i].currentSequenceNumber = pk->getSequenceNumber();
+            }
+          }
+        }    
       }
+      if (ret = true){break;} // exit from the switch
+      
       // Keep track of eventual new clients
       if(getClientIndex(pk->getSrcAddress()) == -1){
         latest_client_response temp;
         temp.clientAddress = pk->getSrcAddress();
         temp.latestSequenceNumber = pk->getSequenceNumber()-1; //Thus when replying simply do ++
+        temp.currentSequenceNumber = pk->getSequenceNumber();
         latestClientResponses.push_back(temp);
       }
-      
+
       if(pk->getType() == WRITE){
         if(pk->getVar() == 'C'){ // If a config change mex
           newConfiguration.assign(pk->getClusterConfig().servers.begin(), pk->getClusterConfig().servers.end());
@@ -714,6 +768,7 @@ void Server::handleMessage(cMessage *msg)
               nextIndexNewConfig[i] = nextIndex[serverInBothConfig];
             }
           }
+          // Start bringing up to date NEW (only) servers
           newServersCanVote = false;
           log_entry newEntry;
           newEntry = log.back();
@@ -767,34 +822,47 @@ void Server::handleMessage(cMessage *msg)
       send(clientCommandResponseRPC, "port$o"); 
     }
   }
-    break;
+  break;
   case RPC_ACK:
   {
     RPCAckPacket *pk = check_and_cast<RPCAckPacket *>(pkGeneric);
+    int sender = pk->getSrcAddress();
     if(status == LEADER){
       if(countingFeedback == true){
-        if(heartbeatSeqNum == pk->getSequenceNumber()){
-          // If not membership change occurring
-          if(configuration == newConfiguration){
+      // If NOT membership change occurring
+      if(configuration == newConfiguration){
+        // If the sequence number match with it's last one and was not yet received
+        if(RPCs[getIndex(configuration, sender)].sequenceNumber == pk->getSequenceNumber() && RPCs[getIndex(configuration, sender)].success == false){
+          RPCs[getIndex(configuration, sender)].success = true;
+          acks++;
+        }
+      }
+      else{ // Membership change occurring
+        // If the sender is in configuration
+        if(getIndex(configuration, sender) != -1){
+          // If the sequence number match with it's last one and was not yet received
+          if(RPCs[getIndex(configuration, sender)].sequenceNumber == pk->getSequenceNumber() && RPCs[getIndex(configuration, sender)].success == false){
+            RPCs[getIndex(configuration, sender)].success = true;
             acks++;
           }
-          else{ // If membership change occurring
-            if(getIndex(configuration, pk->getSrcAddress()) != -1){
-              acks++;
-            }
-            if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
-              acksNewConf++;
-            } 
-          }
         }
-        // If majority of heartbeat exchanged, is possible to finalize the pending read-only request (NO membership change occurring)
-        if(configuration == newConfiguration || newServersCanVote == false){
-          if(acks > configuration.size()/2){
-            countingFeedback = false;
-            for (int i = 0; i < pendingReadClients.size(); i++){
-              sendResponseToClient(READ, pendingReadClients[i]);
-            }
-            pendingReadClients.clear();
+        // If the sender is in newConfiguration
+        if(getIndex(newConfiguration, sender) != -1){
+          // If the sequence number match with it's the last one and was not yet received
+          if(RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == pk->getSequenceNumber() && RPCsNewConfig[getIndex(newConfiguration, sender)].success == false){
+            RPCsNewConfig[getIndex(newConfiguration, sender)].success = true;
+            acksNewConf++;
+          }
+        } 
+      }
+      // If majority of heartbeat exchanged, is possible to finalize the pending read-only request (NO membership change occurring)
+      if(configuration == newConfiguration || newServersCanVote == false){
+        if(acks > configuration.size()/2){
+          countingFeedback = false;
+          for (int i = 0; i < pendingReadClients.size(); i++){
+            sendResponseToClient(READ, pendingReadClients[i]);
+          }
+          pendingReadClients.clear();
           }
         }
         else{ // Membership change occurring, acks must be received by both majority
@@ -809,9 +877,9 @@ void Server::handleMessage(cMessage *msg)
       }
     }
   }
-    break;
+  break;
   default:
-    break;
+  break;
   }
 
   delete pkGeneric;  
@@ -832,8 +900,8 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
   if (onlyToNewServers == false){
     //Send to all followers in the configuration
     for (int i = 0; i < configuration.size(); i++){
-      // If to avoid sending to myself
-      if(configuration[i] != myAddress){
+      // If to avoid sending to myself and to send only if the follower has no pending RPCs
+      if(configuration[i] != myAddress && RPCs[i].success == true){
         append_entry_timer newTimer;
         newTimer.destination = configuration[i];
         newTimer.prevLogIndex = log.back().logIndex -1;
@@ -842,6 +910,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
         newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
         newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To deep copy
         newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+        newTimer.entry.clientsData.assign(newEntry.clientsData.begin(), newEntry.clientsData.end());
         appendEntriesRPC->setDestAddress(configuration[i]);
 
         pk_copy = appendEntriesRPC->dup();
@@ -861,8 +930,8 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
   if(configuration != newConfiguration){
     // Send to all followers in newConfiguration
     for (int i = 0; i < newConfiguration.size(); i++){
-      // If to avoid sending to myself and avoid sending twice if a server is in both configuration and newConfiguration
-      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1){
+      // If to avoid sending to myself and avoid sending twice (if a server is in both configuration and newConfiguration) and only if it has no pendign RPCs
+      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1 && RPCsNewConfig[i].success == true){
         append_entry_timer newTimer;
         newTimer.destination = newConfiguration[i];
         newTimer.prevLogIndex = log.back().logIndex-1;
@@ -871,6 +940,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
         newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
         newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To perform deep copy
         newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+        newTimer.entry.clientsData.assign(newEntry.clientsData.begin(), newEntry.clientsData.end());
         appendEntriesRPC->setDestAddress(newConfiguration[i]);
 
         EV << "New Entry: Index=" << newEntry.logIndex
@@ -898,26 +968,37 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
   appendEntriesRPC->setTerm(currentTerm);
   appendEntriesRPC->setLeaderId(myAddress);
+  appendEntriesRPC->setEntry(newEntry);
+  appendEntriesRPC->setLeaderCommit(commitIndex);
+  appendEntriesRPC->setSrcAddress(myAddress);
   // If NOT membership change occurring OR if it is occurring but the destination is in configuration
   if((configuration == newConfiguration) || (configuration != newConfiguration && getIndex(configuration, destAddress) != -1)){
     appendEntriesRPC->setPrevLogIndex(log[nextIndex[index]-1].logIndex); // -1 because the previous
     appendEntriesRPC->setPrevLogTerm(log[nextIndex[index]-1].term);
+    if (getIndex(configuration, destAddress) != -1){
+      RPCs[getIndex(configuration, destAddress)].sequenceNumber++;
+      appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, destAddress)].sequenceNumber);
+    }
+    if (getIndex(newConfiguration, destAddress) != -1){
+      RPCs[getIndex(newConfiguration, destAddress)].sequenceNumber++;
+      appendEntriesRPC->setSequenceNumber(RPCs[getIndex(newConfiguration, destAddress)].sequenceNumber);
+    }
   }
   else{ // A membership change is occurring and the destination is ONLY in newConfiguration (by exclusion from the IF case above)
     appendEntriesRPC->setPrevLogIndex(log[nextIndexNewConfig[index]-1].logIndex); // -1 because the previous
-    appendEntriesRPC->setPrevLogTerm(log[nextIndexNewConfig[index]-1].term);   
+    appendEntriesRPC->setPrevLogTerm(log[nextIndexNewConfig[index]-1].term);
+    RPCs[getIndex(newConfiguration, destAddress)].sequenceNumber++;
+    appendEntriesRPC->setSequenceNumber(RPCs[getIndex(newConfiguration, destAddress)].sequenceNumber);   
   }
-  appendEntriesRPC->setEntry(newEntry);
-  appendEntriesRPC->setLeaderCommit(commitIndex);
-  appendEntriesRPC->setSrcAddress(myAddress);
-  appendEntriesRPC->setIsBroadcast(false);
 
+  // Create the associated timer to eventually resend the message if no response come back.
   append_entry_timer newTimer;
   newTimer.destination = destAddress;
   newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
   newTimer.entry = newEntry;
   newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
   newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+  newTimer.entry.clientsData.assign(newEntry.clientsData.begin(), newEntry.clientsData.end());
   appendEntriesRPC->setDestAddress(destAddress);
   send(appendEntriesRPC, "port$o");
     
@@ -1187,7 +1268,7 @@ void Server::sendResponseToClient(int type, int clientAddress){
     clientCommandResponseRPC->setValue(-1); // Convention for write responses
     latestClientResponses[getClientIndex(clientAddress)].latestReponseToClient = -1;
   }
-  clientCommandResponseRPC->setSequenceNumber(latestClientResponses[getClientIndex(clientAddress)].latestSequenceNumber + 1);
+  clientCommandResponseRPC->setSequenceNumber(latestClientResponses[getClientIndex(clientAddress)].currentSequenceNumber);
   clientCommandResponseRPC->setSrcAddress(myAddress);
   clientCommandResponseRPC->setDestAddress(clientAddress);
   send(clientCommandResponseRPC, "port$o");
@@ -1245,11 +1326,14 @@ void Server::sendHeartbeatToFollower(){
       appendEntriesRPC->setLeaderCommit(commitIndex);
       appendEntriesRPC->setSrcAddress(myAddress);
       appendEntriesRPC->setDestAddress(configuration[i]);
-      if(withAck == true){
-        appendEntriesRPC->setHeartbeatSeqNum(heartbeatSeqNum);
-      }else{
-        appendEntriesRPC->setHeartbeatSeqNum(-1);
+      appendEntriesRPC->setWithAck(withAck);
+      
+      RPCs[i].sequenceNumber++;
+      appendEntriesRPC->setSequenceNumber(RPCs[i].sequenceNumber);
+      if (newConfiguration != configuration && getIndex(newConfiguration, configuration[i]) != -1){
+        RPCsNewConfig[getIndex(newConfiguration, configuration[i])].sequenceNumber++;
       }
+
       appendEntriesRPC->setDisplayString("b=7,7,oval,blue,black,1");
       send(appendEntriesRPC, "port$o");
     }
@@ -1268,11 +1352,11 @@ void Server::sendHeartbeatToFollower(){
         appendEntriesRPC->setLeaderCommit(commitIndex);
         appendEntriesRPC->setSrcAddress(myAddress);
         appendEntriesRPC->setDestAddress(newConfiguration[i]);
-        if(withAck == true){
-          appendEntriesRPC->setHeartbeatSeqNum(heartbeatSeqNum);
-        }else{
-          appendEntriesRPC->setHeartbeatSeqNum(-1);
-        }
+        appendEntriesRPC->setWithAck(withAck);
+        
+        RPCsNewConfig[i].sequenceNumber++;
+        appendEntriesRPC->setSequenceNumber(RPCsNewConfig[i].sequenceNumber);
+        
         appendEntriesRPC->setDisplayString("b=7,7,oval,blue,black,1");
         send(appendEntriesRPC, "port$o");
       }
@@ -1296,6 +1380,12 @@ void Server::sendRequestVote(){
   for (int i = 0; i < configuration.size(); i++){
     if(configuration[i] != myAddress){
 
+      RPCs[i].sequenceNumber++;
+      appendEntriesRPC->setSequenceNumber(RPCs[i].sequenceNumber);
+      if (getIndex(newConfiguration, configuration[i]) != -1){
+        RPCsNewConfig[getIndex(newConfiguration, configuration[i])].sequenceNumber++;
+      }
+      
       requestVoteRPC->setDestAddress(configuration[i]);
       pk_copy = requestVoteRPC->dup();
       send(pk_copy, "port$o");
@@ -1305,7 +1395,8 @@ void Server::sendRequestVote(){
   if (newConfiguration != configuration){
     for (int i = 0; i < newConfiguration.size(); i++){
       if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1){
-
+        RPCsNewConfig[i].sequenceNumber++;
+        appendEntriesRPC->setSequenceNumber(RPCsNewConfig[i].sequenceNumber);
         requestVoteRPC->setDestAddress(newConfiguration[i]);
         pk_copy = requestVoteRPC->dup();
         send(pk_copy, "port$o");
