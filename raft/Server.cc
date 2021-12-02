@@ -270,16 +270,16 @@ void Server::handleMessage(cMessage *msg)
       if (configuration != newConfiguration)
       {
         if (getIndex(configuration, appendEntryTimers[i].destination) != -1){
-          RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
+          //RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
           appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber);
         }
         if (getIndex(newConfiguration, appendEntryTimers[i].destination) != -1){
-          RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber++;
+          //RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber++;
           appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber);
         }
       }
       else{
-        RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
+        //RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
         appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber);
       }
       send(appendEntriesRPC, "port$o");
@@ -458,7 +458,23 @@ void Server::handleMessage(cMessage *msg)
     if(status == LEADER){
       receiverAddress = pk->getSrcAddress();
       // If a very late message coming from someone from before a membership change already completed (which didn't include him in the new configuration)
-      if (getIndex(configuration, receiverAddress) == -1 && getIndex(newConfiguration, receiverAddress) == -1){break;}
+      if (getIndex(configuration, receiverAddress) == -1 && getIndex(newConfiguration, receiverAddress) == -1){
+        break;
+      }
+      // Check sequence number if in configuration
+      if(getIndex(configuration, receiverAddress) != -1 && pk->getSequenceNumber() == RPCs[getIndex(configuration, receiverAddress)].sequenceNumber){
+        RPCs[getIndex(configuration, receiverAddress)].success = true;
+      }
+      else{
+        break;
+      }
+      // Check sequence number if membership change in newConfiguration
+      if (configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && pk->getSequenceNumber() == RPCsNewConfig[getIndex(newConfiguration, receiverAddress)].sequenceNumber){
+        RPCsNewConfig[getIndex(newConfiguration, receiverAddress)].success = true;
+      }
+      else{
+        break;
+      }
       
       for(int i=0; i < appendEntryTimers.size() ; i++){
         if (receiverAddress == appendEntryTimers[i].destination){
@@ -472,7 +488,36 @@ void Server::handleMessage(cMessage *msg)
         int position;
         int entryIndex;
         log_entry newEntry;
-        // If membership change is occurring
+
+        // If server in configuration
+        if(getIndex(configuration, receiverAddress) != -1){
+          position = getIndex(configuration, receiverAddress);
+          // Avoid next entry to send is out of bound
+          entryIndex = nextIndex[position];
+          if (entryIndex > 0){
+            entryIndex = --nextIndex[position]; // first decrement and then save in the variable
+          }
+        }
+
+        // If server in newConfiguration during a membership change
+        if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1){
+          position = getIndex(newConfiguration, receiverAddress);
+          // Avoid next entry to send is out of bound
+          entryIndex = nextIndexNewConfig[position];
+          if (entryIndex > 0){
+            entryIndex = --nextIndexNewConfig[position];
+          }
+        }
+
+        newEntry = log[entryIndex];
+        newEntry.clientsData.assign(log[entryIndex].clientsData.begin(), log[entryIndex].clientsData.end());
+        if(newEntry.var == 'C'){  
+          newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
+          newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+        }
+        appendNewEntryTo(newEntry, receiverAddress, position);
+
+        /* // If membership change is occurring
         if(configuration != newConfiguration){
           // If response come from a not new server
           if(getIndex(configuration, receiverAddress) != -1){
@@ -499,7 +544,7 @@ void Server::handleMessage(cMessage *msg)
         else{ // Not membership change occurring
           position = getIndex(configuration, receiverAddress);
           // Avoid next entry to send is out of bound
-          entryIndex = nextIndexNewConfig[position];
+          entryIndex = nextIndex[position];
           if (entryIndex > 0){
             entryIndex = --nextIndex[position];
           }
@@ -510,11 +555,20 @@ void Server::handleMessage(cMessage *msg)
           newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
           newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
         }
-        appendNewEntryTo(newEntry, receiverAddress, position);
+        appendNewEntryTo(newEntry, receiverAddress, position); */
       }
       else{ //Success == true
         int position;
         int entryIndex;
+
+        // If server in configuration
+        if(getIndex(configuration, receiverAddress) != -1){
+          
+        }
+
+
+
+
         // If membership change is occurring
         if(configuration != newConfiguration){
           if(getIndex(configuration, receiverAddress) != -1){
