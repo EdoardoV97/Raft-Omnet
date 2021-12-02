@@ -50,7 +50,6 @@ packet RPCAppendEntriesPacket extends RPCPacket
     log_entry entry;                    // log entries to store (empty for heartbeat);
     int leaderCommit;                   // leader’s commitIndex
     int heartbeatSeqNum;                //for optional heartbeat with sequence number (for read-only interaction)
-    clients_data clientsData;
 };
 
 

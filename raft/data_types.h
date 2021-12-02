@@ -10,11 +10,6 @@ struct latest_client_response
     int latestReponseToClient;
 };
 
-struct clients_data
-{
-    vector<latest_client_response> responses;
-};
-
 struct cluster_configuration
 {
     vector<int> servers;
@@ -30,6 +25,7 @@ struct log_entry
     int clientAddress;
     vector<int> cOld;
     vector<int> cNew;
+    vector<latest_client_response> clientsData;
 };
 
 struct append_entry_timer

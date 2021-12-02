@@ -20,10 +20,12 @@ class Server : public cSimpleModule
     cMessage *sendHearthbeat;
     cMessage *electionTimeoutEvent;
     cMessage *minElectionTimeoutEvent;
+    cMessage *crashTimeoutEvent;
+    cMessage *reviveTimeoutEvent;
     vector<append_entry_timer> appendEntryTimers;
     
     int myAddress;   // This is the server ID
-    int receiverAddress; // This is receiver server ID
+    int receiverAddress; // This is receiver server ID (for utility)
     
     int votes = 0; // This is the number of received votes by servers in the configuration (meaninful when status = candidate). It refers to member in the "old" configuration when a membership change in occurring.
     int votesNewConfig = 0; // This is the number of received votes by servers in the "new" configuration (meaninful when status = candidate) when a membership change in occurring.
@@ -38,6 +40,7 @@ class Server : public cSimpleModule
     vector<int> pendingReadClients;
     bool believeCurrentLeaderExists = false;
     bool newServersCanVote = true;
+    bool iAmCrashed = false;
 
     int adminAddress;  // This is the admin address ID
 
@@ -109,6 +112,8 @@ Server::~Server()
   for (int i = 0; i < appendEntryTimers.size() ; i++){
     cancelAndDelete(appendEntryTimers[i].timeoutEvent);
   }
+  cancelAndDelete(reviveTimeoutEvent);
+  cancelAndDelete(crashTimeoutEvent);
 }
 
 void Server::initialize()
@@ -117,6 +122,8 @@ void Server::initialize()
   sendHearthbeat = new cMessage("send-hearthbeat");
   electionTimeoutEvent = new cMessage("election-timeout-event");
   minElectionTimeoutEvent = new cMessage("min-election-timeout-event");
+  crashTimeoutEvent = new cMessage("crash-timeout-event");
+  reviveTimeoutEvent = new cMessage("revive-timeout-event");
 
   // Initialize addresses
   myAddress = gate("port$i")->getPreviousGate()->getId(); // Return index of this server gate port in the Switch
@@ -141,6 +148,8 @@ void Server::initialize()
   WATCH(status);
   WATCH(newServersCanVote);
 
+  WATCH(log);
+
   initializeConfiguration();
   newConfiguration.assign(configuration.begin(), configuration.end());
 
@@ -151,6 +160,8 @@ void Server::initialize()
   firstEntry.logIndex = 0;
   firstEntry.cNew.assign(configuration.begin(), configuration.end());
   log.push_back(firstEntry);
+
+  scheduleAt(simTime() +  uniform(SimTime(par("lowCrashTimeout")), SimTime(par("highCrashTimeout"))), crashTimeoutEvent);
 
   if (par("instantieatedAtRunTime"))
   {
@@ -164,6 +175,47 @@ void Server::initialize()
 
 void Server::handleMessage(cMessage *msg)
 {
+  if (msg == crashTimeoutEvent)
+  {
+    cancelEvent(sendHearthbeat);
+    cancelEvent(electionTimeoutEvent);
+    cancelEvent(minElectionTimeoutEvent);
+    iAmCrashed = true;
+    scheduleAt(simTime() + par("reviveTimeout"), reviveTimeoutEvent);
+    return;
+  }
+
+  if(msg == reviveTimeoutEvent){
+    // Reset all original raft's volatile variables 
+    x = 0;
+    configuration.clear();
+    newConfiguration.clear();
+    latestClientResponses.clear();
+    commitIndex = 1;
+    lastApplied = 1;
+    nextIndex.clear();
+    matchIndex.clear();
+    nextIndexNewConfig.clear();
+    matchIndexNewConfig.clear();
+    // Reset all other utility volatile variables 
+    votes = 0; 
+    votesNewConfig = 0; 
+    leaderAddress = -1;
+    acks = 0; 
+    acksNewConf = 0;
+    countingFeedback = false;
+    withAck = false;
+    heartbeatSeqNum = 0;
+    waitingNoOp = false;
+    pendingReadClients.clear();
+    believeCurrentLeaderExists = false;
+    newServersCanVote = true;
+    //The replay of all the log will be triggered automatically from the protocol
+    iAmCrashed = false;
+    return;
+  }
+  
+
   if(msg == sendHearthbeat){
     sendHeartbeatToFollower();
     return;
@@ -189,8 +241,7 @@ void Server::handleMessage(cMessage *msg)
       log_entry newEntry = appendEntryTimers[i].entry;
       newEntry.cOld.assign(appendEntryTimers[i].entry.cOld.begin(), appendEntryTimers[i].entry.cOld.end());
       newEntry.cNew.assign(appendEntryTimers[i].entry.cNew.begin(), appendEntryTimers[i].entry.cNew.end());
-      clients_data temp;
-      temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
+      newEntry.clientsData.assign(appendEntryTimers[i].entry.clientsData.begin(), appendEntryTimers[i].entry.clientsData.end());
       //Resend the message
       appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
       appendEntriesRPC->setTerm(currentTerm);
@@ -199,7 +250,6 @@ void Server::handleMessage(cMessage *msg)
       appendEntriesRPC->setPrevLogTerm(appendEntryTimers[i].prevLogTerm);
       appendEntriesRPC->setEntry(newEntry);
       appendEntriesRPC->setLeaderCommit(commitIndex);
-      appendEntriesRPC->setClientsData(temp);
       appendEntriesRPC->setSrcAddress(myAddress);
       appendEntriesRPC->setIsBroadcast(false);
       appendEntriesRPC->setDestAddress(appendEntryTimers[i].destination);
@@ -262,7 +312,7 @@ void Server::handleMessage(cMessage *msg)
             commitIndex = pk->getEntry().logIndex;
           }
         }
-        latestClientResponses.assign(pk->getClientsData().responses.begin(), pk->getClientsData().responses.end());
+        latestClientResponses.assign(pk->getEntry().clientsData.begin(), pk->getEntry().clientsData.end());
         // If it's a membership change entry
         if(pk->getEntry().var == 'C'){
           // If it is the entry of the first phase (Cold,new)
@@ -313,7 +363,7 @@ void Server::handleMessage(cMessage *msg)
             if(pk->getHeartbeatSeqNum() != -1){
               sendAck(pk->getSrcAddress(), pk->getHeartbeatSeqNum());
             }
-            latestClientResponses.assign(pk->getClientsData().responses.begin(), pk->getClientsData().responses.end());
+            latestClientResponses.assign(pk->getEntry().clientsData.begin(), pk->getEntry().clientsData.end());
             scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
             scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
           }
@@ -422,6 +472,7 @@ void Server::handleMessage(cMessage *msg)
           }
         }
         newEntry = log[entryIndex];
+        newEntry.clientsData.assign(log[entryIndex].clientsData.begin(), log[entryIndex].clientsData.end());
         if(newEntry.var == 'C'){  
           newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
           newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -451,6 +502,7 @@ void Server::handleMessage(cMessage *msg)
               if (entryIndex<log.size()){
                 log_entry newEntry;
                 newEntry = log[entryIndex];
+                newEntry.clientsData.assign(log[entryIndex].clientsData.begin(), log[entryIndex].clientsData.end());
                 if(newEntry.var == 'C'){  
                   newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
                   newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -469,6 +521,7 @@ void Server::handleMessage(cMessage *msg)
               if (entryIndex < log.size()){
                 log_entry newEntry;
                 newEntry = log[entryIndex];
+                newEntry.clientsData.assign(log[entryIndex].clientsData.begin(), log[entryIndex].clientsData.end());
                 if(newEntry.var == 'C'){  
                   newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
                   newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -485,6 +538,7 @@ void Server::handleMessage(cMessage *msg)
                   newEntry.var = 'C';
                   newEntry.cOld.assign(configuration.begin(), configuration.end());
                   newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
+                  newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
                   log.push_back(newEntry);
                   matchIndex[getIndex(configuration, myAddress)]++;
                   if (getIndex(newConfiguration, myAddress) != -1)
@@ -511,6 +565,7 @@ void Server::handleMessage(cMessage *msg)
             if (entryIndex<log.size()){
               log_entry newEntry;
               newEntry = log[entryIndex];
+              newEntry.clientsData.assign(log[entryIndex].clientsData.begin(), log[entryIndex].clientsData.end());
               if(newEntry.var == 'C'){  
                 newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
                 newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -528,7 +583,7 @@ void Server::handleMessage(cMessage *msg)
         for(int i=lastApplied; i < commitIndex; i++){
           lastApplied++;
           applyCommand(log[lastApplied]);
-          if(log[lastApplied].term == currentTerm){
+          if(log[lastApplied].term == currentTerm){  // TODO checkare se va creata Cnew se più avanti dopo Cold,new già non c'è
             if(log[lastApplied].var == 'N'){
               if(waitingNoOp == true){
                 waitingNoOp = false;
@@ -537,7 +592,7 @@ void Server::handleMessage(cMessage *msg)
             }
             else{
               if(log[lastApplied].var == 'C'){ 
-                if(!log[lastApplied].cOld.empty()){ //Cold,new case, trigger the Cnew append
+                if(!log[lastApplied].cOld.empty()){ //Cold,new case: now trigger the Cnew append
                 // TODO: Aggiungere check per vedere se esiste una pending Cold,new
                   bubble("Creating C_new");
                   log_entry newEntry;
@@ -546,6 +601,7 @@ void Server::handleMessage(cMessage *msg)
                   newEntry.clientAddress = log[lastApplied].clientAddress;
                   newEntry.var = 'C';
                   newEntry.value = log[lastApplied].value;
+                  newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
                   // Update matchIndex to count leader vote
                   matchIndex[getIndex(configuration, myAddress)]++;
                   // Update also in the matchIndexNewConfig if leader is also in that new configuration.
@@ -573,7 +629,7 @@ void Server::handleMessage(cMessage *msg)
                 sendResponseToClient(WRITE, log[lastApplied].clientAddress);
               }
             }
-          }
+          } // TODO else case to create Cnew in case of previous leader crash before creating it?
         }
       }
     }
@@ -663,6 +719,7 @@ void Server::handleMessage(cMessage *msg)
           newEntry = log.back();
           newEntry.cOld.assign(log.back().cOld.begin(), log.back().cOld.end());
           newEntry.cNew.assign(log.back().cNew.begin(), log.back().cNew.end());
+          newEntry.clientsData.assign(log.back().clientsData.begin(), log.back().clientsData.end());
           appendNewEntry(newEntry, true);
           break;
         } 
@@ -672,6 +729,7 @@ void Server::handleMessage(cMessage *msg)
         newEntry.clientAddress = pk->getSrcAddress();
         newEntry.var = pk->getVar();
         newEntry.value = pk->getValue();
+        newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
         log.push_back(newEntry);
         matchIndex[getIndex(configuration, myAddress)]++;
         
@@ -761,8 +819,6 @@ void Server::handleMessage(cMessage *msg)
 
 void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
   RPCPacket *pk_copy;
-  clients_data temp;
-  temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
 
   appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
   appendEntriesRPC->setTerm(currentTerm);
@@ -771,7 +827,6 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
   appendEntriesRPC->setPrevLogTerm(log[log.size()-2].term); 
   appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
-  appendEntriesRPC->setClientsData(temp);
   appendEntriesRPC->setSrcAddress(myAddress);
   
   if (onlyToNewServers == false){
@@ -839,8 +894,6 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
 }
 
 void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
-  clients_data temp;
-  temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
 
   appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
   appendEntriesRPC->setTerm(currentTerm);
@@ -856,7 +909,6 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   }
   appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
-  appendEntriesRPC->setClientsData(temp);
   appendEntriesRPC->setSrcAddress(myAddress);
   appendEntriesRPC->setIsBroadcast(false);
 
@@ -1047,6 +1099,7 @@ void Server::becomeLeader(){
   newEntry.term = currentTerm;
   newEntry.logIndex = log.size();
   newEntry.var = 'N';
+  newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
   matchIndex[getIndex(configuration, myAddress)]++;
   log.push_back(newEntry);
   appendNewEntry(newEntry, false);
@@ -1183,16 +1236,13 @@ void Server::sendHeartbeatToFollower(){
   for (int i = 0; i < configuration.size(); i++){
     if(configuration[i] != myAddress){
       log_entry emptyEntry;
-      emptyEntry.term = -1; //convention to explicit heartbeat 
-      clients_data temp;
-      temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
+      emptyEntry.term = -1; //convention to explicit heartbeat
     
       appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
       appendEntriesRPC->setTerm(currentTerm);
       appendEntriesRPC->setLeaderId(myAddress);
       appendEntriesRPC->setEntry(emptyEntry);
       appendEntriesRPC->setLeaderCommit(commitIndex);
-      appendEntriesRPC->setClientsData(temp);
       appendEntriesRPC->setSrcAddress(myAddress);
       appendEntriesRPC->setDestAddress(configuration[i]);
       if(withAck == true){
@@ -1210,15 +1260,12 @@ void Server::sendHeartbeatToFollower(){
       if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1){
         log_entry emptyEntry;
         emptyEntry.term = -1; //convention to explicit heartbeat 
-        clients_data temp;
-        temp.responses.assign(latestClientResponses.begin(), latestClientResponses.end());
       
         appendEntriesRPC = new RPCAppendEntriesPacket("RPC_APPEND_ENTRIES", RPC_APPEND_ENTRIES);
         appendEntriesRPC->setTerm(currentTerm);
         appendEntriesRPC->setLeaderId(myAddress);
         appendEntriesRPC->setEntry(emptyEntry);
         appendEntriesRPC->setLeaderCommit(commitIndex);
-        appendEntriesRPC->setClientsData(temp);
         appendEntriesRPC->setSrcAddress(myAddress);
         appendEntriesRPC->setDestAddress(newConfiguration[i]);
         if(withAck == true){
@@ -1296,6 +1343,13 @@ void Server::refreshDisplay() const
 
     if (status == LEADER){
       getDisplayString().setTagArg("t", 2, "green");
-      //getDisplayString().setTagArg("i2", 0, "status/busy");
     }
+}
+
+std::ostream& operator<<(std::ostream& os, const vector<log_entry> log){
+  for (int i = 0; i < log.size(); i++){
+    os << "{index=" << log[i].logIndex << ",term=" << log[i].term << "} "; // no endl!
+
+  }
+  return os;
 }
