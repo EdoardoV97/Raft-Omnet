@@ -24,9 +24,10 @@ class Server : public cSimpleModule
     
     int myAddress;   // This is the server ID
     int receiverAddress; // This is receiver server ID
+    int adminAddress;  // This is the admin address ID
     
-    int votes = 0; // This is the number of received votes by servers in the configuration (meaninful when status = candidate). It refers to member in the "old" configuration when a membership change in occurring.
-    int votesNewConfig = 0; // This is the number of received votes by servers in the "new" configuration (meaninful when status = candidate) when a membership change in occurring.
+    int votes = 0; // This is the number of received votes by servers in the configuration (meaninful when status = candidate). It refers to member in the "old" configuration when a membership change is occurring.
+    int votesNewConfig = 0; // This is the number of received votes by servers in the "new" configuration (meaninful when status = candidate) when a membership change is occurring.
 
     int leaderAddress = -1; // This is the leader ID
     int acks = 0; // This is the number of acks (if membership change: acks from configuration)
@@ -39,7 +40,6 @@ class Server : public cSimpleModule
     bool believeCurrentLeaderExists = false;
     bool newServersCanVote = true;
 
-    int adminAddress;  // This is the admin address ID
 
     // Pointers to handle RPC mexs
     RPCAppendEntriesPacket *appendEntriesRPC = nullptr;
@@ -62,8 +62,8 @@ class Server : public cSimpleModule
     vector<log_entry> log;
 
     // Volatile state --> Reinitialize after crash
-    int commitIndex = 1;
-    int lastApplied = 1;
+    int commitIndex = 0;
+    int lastApplied = 0;
 
     // Volatile state on leaders --> Reinitialized after election
     vector<int> nextIndex;
@@ -72,12 +72,14 @@ class Server : public cSimpleModule
     vector<int> nextIndexNewConfig;
     vector<int> matchIndexNewConfig;
 
-    void initializeConfiguration();
+    // Snapshot file
+    snapshot_file snapshot;
 
   protected:
     virtual void refreshDisplay() const override;
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;
+    void initializeConfiguration();
     void appendNewEntry(log_entry newEntry, bool onlyToNewServers);
     int getIndex(vector<int> v, int K);
     void appendNewEntryTo(log_entry newEntry, int destAddress, int index);
@@ -95,6 +97,7 @@ class Server : public cSimpleModule
     bool checkNewServersAreUpToDate();
     void sendHeartbeatToFollower();
     void sendRequestVote();
+    void takeSnapshot();
 };
 
 Define_Module(Server);
@@ -229,9 +232,9 @@ void Server::handleMessage(cMessage *msg)
       //1) Reply false if term < currentTerm 2)Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm 
       // To avoid out of bound access
       bool partialEval = false;
-      EV << pk->getPrevLogIndex() << "<" << log.size() << endl;
-      if(pk->getPrevLogIndex() < log.size()){
-        EV << log[pk->getPrevLogIndex()].term << "!=" << pk->getPrevLogTerm() << endl;
+      //EV << pk->getPrevLogIndex() << "<" << log.back().logIndex << endl;
+      if(pk->getPrevLogIndex() < log.back().logIndex){
+        //EV << log[pk->getPrevLogIndex()].term << "!=" << pk->getPrevLogTerm() << endl;
         if(log[pk->getPrevLogIndex()].term != pk->getPrevLogTerm()){
           partialEval = true;
         }
@@ -320,10 +323,14 @@ void Server::handleMessage(cMessage *msg)
         }
     }
 
+    // Apply all entries through committ index
     for(int i=lastApplied ; i < commitIndex; i++){
       lastApplied++;
       applyCommand(log[lastApplied]);
     }
+
+    // Take snapshot if needed
+    if (log.size() >= par("maxLogSizeBeforeSnapshot")) {takeSnapshot();}
   }
   break;
   case RPC_REQUEST_VOTE:
@@ -430,27 +437,22 @@ void Server::handleMessage(cMessage *msg)
       }
       else{ //Success == true
         int position;
-        int entryIndex;
         // If membership change is occurring
         if(configuration != newConfiguration){
           if(getIndex(configuration, pk->getSrcAddress()) != -1){
             position = getIndex(configuration, pk->getSrcAddress());
-            entryIndex = nextIndex[position];
-            matchIndex[position] = nextIndex[position];
-            if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
-              matchIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())] = matchIndex[position];
-            }
-            if(entryIndex < log.size()){
+            if(nextIndex[position] <= log.back().logIndex){
               // Update the matchIndex and the NextIndex of the server who send the leader the response
+              matchIndex[position] = nextIndex[position];
               nextIndex[position]++;
-              entryIndex++;
-            
               if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
+                matchIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())] = matchIndex[position];
                 nextIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())] = nextIndex[position];
               }
-              if (entryIndex<log.size()){
+              // Send if new nextIndex is not out of bound
+              if (nextIndex[position] <= log.back().logIndex){
                 log_entry newEntry;
-                newEntry = log[entryIndex];
+                newEntry = log[nextIndex[position]];
                 if(newEntry.var == 'C'){  
                   newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
                   newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -461,14 +463,12 @@ void Server::handleMessage(cMessage *msg)
           }
           else{
             position = getIndex(newConfiguration, pk->getSrcAddress());
-            entryIndex = nextIndexNewConfig[position]; 
-            matchIndexNewConfig[position] = nextIndexNewConfig[position];
-            if(entryIndex < log.size()){
+            if(nextIndexNewConfig[position] <= log.back().logIndex){
+              matchIndexNewConfig[position] = nextIndexNewConfig[position];
               nextIndexNewConfig[position]++;
-              entryIndex++;
-              if (entryIndex < log.size()){
+              if (nextIndexNewConfig[position] < log.back().logIndex){
                 log_entry newEntry;
-                newEntry = log[entryIndex];
+                newEntry = log[nextIndexNewConfig[position]];
                 if(newEntry.var == 'C'){  
                   newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
                   newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -480,7 +480,7 @@ void Server::handleMessage(cMessage *msg)
                   bubble("Creating C_old,new");
                   log_entry newEntry;
                   newEntry.term = currentTerm;
-                  newEntry.logIndex = log.size();
+                  newEntry.logIndex = log.back().logIndex + 1;
                   newEntry.clientAddress = adminAddress;
                   newEntry.var = 'C';
                   newEntry.cOld.assign(configuration.begin(), configuration.end());
@@ -502,15 +502,13 @@ void Server::handleMessage(cMessage *msg)
         }
         else{ // Not membership change occurring
           position = getIndex(configuration, pk->getSrcAddress());
-          entryIndex = nextIndex[position]; 
-          //matchIndex[position] = nextIndex[position];
-          if(entryIndex < log.size()){
+          if(nextIndex[position] <= log.back().logIndex){
+            // Update matchIndex and nextIndex
             matchIndex[position] = nextIndex[position];
             nextIndex[position]++; 
-            entryIndex++;
-            if (entryIndex<log.size()){
+            if (nextIndex[position] <= log.back().logIndex){
               log_entry newEntry;
-              newEntry = log[entryIndex];
+              newEntry = log[nextIndex[position]];
               if(newEntry.var == 'C'){  
                 newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
                 newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -520,7 +518,7 @@ void Server::handleMessage(cMessage *msg)
           }
         }
 
-        for (int newCommitIndex = commitIndex + 1; newCommitIndex < log.size(); newCommitIndex++){
+        for (int newCommitIndex = commitIndex + 1; newCommitIndex < log.back().logIndex; newCommitIndex++){
           if(majority(newCommitIndex) == true && log[newCommitIndex].term == currentTerm){
             commitIndex = newCommitIndex;
           }
@@ -542,7 +540,7 @@ void Server::handleMessage(cMessage *msg)
                   bubble("Creating C_new");
                   log_entry newEntry;
                   newEntry.term = currentTerm;
-                  newEntry.logIndex = log.size();
+                  newEntry.logIndex = log.back().logIndex + 1;
                   newEntry.clientAddress = log[lastApplied].clientAddress;
                   newEntry.var = 'C';
                   newEntry.value = log[lastApplied].value;
@@ -668,7 +666,7 @@ void Server::handleMessage(cMessage *msg)
         } 
         log_entry newEntry;
         newEntry.term = currentTerm;
-        newEntry.logIndex = log.size();
+        newEntry.logIndex = log.back().logIndex + 1;
         newEntry.clientAddress = pk->getSrcAddress();
         newEntry.var = pk->getVar();
         newEntry.value = pk->getValue();
@@ -752,6 +750,11 @@ void Server::handleMessage(cMessage *msg)
     }
   }
     break;
+  case RPC_INSTALL_SNAPSHOT:
+  {}
+  break;
+  case RPC_INSTALL_SNAPSHOT_RESPONSE:
+  {}
   default:
     break;
   }
@@ -768,7 +771,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
   appendEntriesRPC->setTerm(currentTerm);
   appendEntriesRPC->setLeaderId(myAddress);
   appendEntriesRPC->setPrevLogIndex(log.back().logIndex - 1);
-  appendEntriesRPC->setPrevLogTerm(log[log.size()-2].term); 
+  appendEntriesRPC->setPrevLogTerm(log[log.back().logIndex - 1].term); 
   appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
   appendEntriesRPC->setClientsData(temp);
@@ -782,8 +785,8 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
         append_entry_timer newTimer;
         newTimer.destination = configuration[i];
         newTimer.prevLogIndex = log.back().logIndex -1;
-        newTimer.prevLogTerm = log[log.size()-2].term;
-        newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
+        newTimer.prevLogTerm = log[log.back().logIndex - 1].term;
+       newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
         newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
         newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To deep copy
         newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -811,7 +814,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
         append_entry_timer newTimer;
         newTimer.destination = newConfiguration[i];
         newTimer.prevLogIndex = log.back().logIndex-1;
-        newTimer.prevLogTerm = log[log.size()-2].term;
+        newTimer.prevLogTerm = log[log.back().logIndex - 1].term;
         newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
         newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
         newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To perform deep copy
@@ -934,7 +937,7 @@ bool Server::majority(int N){
 }
 
 void Server::applyCommand(log_entry entry){
-  if(entry.value == -2 || entry.var == 'C'){ //no_op entry
+  if(entry.value == -2 || entry.var == 'C'){ //no_op entry, // TODO: si può usare entry.var == 'N' al post di -2?
     return;
   }
 
@@ -1045,7 +1048,7 @@ void Server::becomeLeader(){
 
   log_entry newEntry;
   newEntry.term = currentTerm;
-  newEntry.logIndex = log.size();
+  newEntry.logIndex = log.back().logIndex + 1;
   newEntry.var = 'N';
   matchIndex[getIndex(configuration, myAddress)]++;
   log.push_back(newEntry);
@@ -1164,7 +1167,7 @@ bool Server::checkNewServersAreUpToDate(){
   }
 
   for (int i = 0; i < serversOnlyInNewConf.size(); i++){
-    if(matchIndexNewConfig[getIndex(newConfiguration, serversOnlyInNewConf[i])] == log.size()-1){
+    if(matchIndexNewConfig[getIndex(newConfiguration, serversOnlyInNewConf[i])] == log.back().logIndex){
       counter++;
     }
   }
@@ -1266,6 +1269,28 @@ void Server::sendRequestVote(){
     }
   }
   delete(requestVoteRPC);
+}
+
+void Server::takeSnapshot(){
+  for (int i=0; i<log.size(); i++){
+    if(log[i].logIndex == commitIndex){
+
+      // Save index and term of last entry in the log known to be committed
+      snapshot.lastIncludedIndex = log[i].logIndex;
+      snapshot.lastIncludedTerm = log[i].term;
+
+      // Save state machine state
+      snapshot.var = 'x';
+      snapshot.value = x;
+      snapshot.oldConfiguration.assign()
+      snapshot.newConfiguration
+      // TODO: snapshot.latestConfig = newConfiguration
+
+      // Delete the log till(included) the entry with lastIncludedIndex
+      log.erase(log.begin(), log.begin() + i + 1); // begin() + i erase the first i elements of the log. +1 is needed since log positions start from 0
+      break; 
+    }
+  }
 }
 
 void Server::refreshDisplay() const
