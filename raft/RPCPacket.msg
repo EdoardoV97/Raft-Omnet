@@ -25,18 +25,17 @@ packet RPCPacket
     int destAddress;
     bool isBroadcast = false;
     string displayString = "b=10,10,oval,kind,kind,1";
+    int sequenceNumber;
 };
 
 packet RPCClientCommandPacket extends RPCPacket{
     char var;
     int value;
-    int type; // Convention: READ = 0, WRITE = 1; 
-    int sequenceNumber;
+    int type; // Convention: READ = 0, WRITE = 1;
     cluster_configuration clusterConfig;
 }
 
 packet RPCClientCommandResponsePacket extends RPCPacket{
-    int sequenceNumber;
     int value;
     bool redirect = false;
     int lastKnownLeader;
@@ -50,8 +49,7 @@ packet RPCAppendEntriesPacket extends RPCPacket
     int prevLogTerm = 0;                // term of prevLogIndex entry
     log_entry entry;                    // log entries to store (empty for heartbeat);
     int leaderCommit;                   // leader’s commitIndex
-    int heartbeatSeqNum;                //for optional heartbeat with sequence number (for read-only interaction)
-    clients_data clientsData;
+    bool withAck;
 };
 
 
@@ -89,6 +87,4 @@ packet RPCInstallSnapshotResponsePacket extends RPCPacket
     int term ;      // currentTerm, for leader to update itself
 }
 
-packet RPCAckPacket extends RPCPacket{
-    int sequenceNumber;
-};
+packet RPCAckPacket extends RPCPacket{};

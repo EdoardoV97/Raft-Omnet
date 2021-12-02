@@ -8,17 +8,20 @@ struct latest_client_response
     int clientAddress;
     int latestSequenceNumber;
     int latestReponseToClient;
-};
-
-struct clients_data
-{
-    vector<latest_client_response> responses;
+    int currentSequenceNumber;
 };
 
 struct cluster_configuration
 {
     vector<int> servers;
 };
+
+struct lastRPC
+{
+    bool success = false;
+    int sequenceNumber = -1;
+};
+
 
 
 struct log_entry
@@ -30,6 +33,7 @@ struct log_entry
     int clientAddress;
     vector<int> cOld;
     vector<int> cNew;
+    vector<latest_client_response> clientsData;
 };
 
 struct append_entry_timer
