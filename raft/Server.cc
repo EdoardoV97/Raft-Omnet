@@ -273,16 +273,16 @@ void Server::handleMessage(cMessage *msg)
       if (configuration != newConfiguration)
       {
         if (getIndex(configuration, appendEntryTimers[i].destination) != -1){
-          RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
+          //RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
           appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber);
         }
         if (getIndex(newConfiguration, appendEntryTimers[i].destination) != -1){
-          RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber++;
+          //RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber++;
           appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber);
         }
       }
       else{
-        RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
+        //RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
         appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber);
       }
       send(appendEntriesRPC, "port$o");
@@ -465,7 +465,23 @@ void Server::handleMessage(cMessage *msg)
     if(status == LEADER){
       receiverAddress = pk->getSrcAddress();
       // If a very late message coming from someone from before a membership change already completed (which didn't include him in the new configuration)
-      if (getIndex(configuration, receiverAddress) == -1 && getIndex(newConfiguration, receiverAddress) == -1){break;}
+      if (getIndex(configuration, receiverAddress) == -1 && getIndex(newConfiguration, receiverAddress) == -1){
+        break;
+      }
+      // Check sequence number if in configuration
+      if(getIndex(configuration, receiverAddress) != -1 && pk->getSequenceNumber() == RPCs[getIndex(configuration, receiverAddress)].sequenceNumber){
+        RPCs[getIndex(configuration, receiverAddress)].success = true;
+      }
+      else{
+        break;
+      }
+      // Check sequence number if membership change in newConfiguration
+      if (configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && pk->getSequenceNumber() == RPCsNewConfig[getIndex(newConfiguration, receiverAddress)].sequenceNumber){
+        RPCsNewConfig[getIndex(newConfiguration, receiverAddress)].success = true;
+      }
+      else{
+        break;
+      }
       
       for(int i=0; i < appendEntryTimers.size() ; i++){
         if (receiverAddress == appendEntryTimers[i].destination){
@@ -479,38 +495,27 @@ void Server::handleMessage(cMessage *msg)
         int position;
         int entryIndex;
         log_entry newEntry;
-        // If membership change is occurring
-        if(configuration != newConfiguration){
-          // If response come from a not new server
-          if(getIndex(configuration, receiverAddress) != -1){
-            position = getIndex(configuration, receiverAddress);
-            // Avoid next entry to send is out of bound
-            entryIndex = nextIndex[position];
-            if (entryIndex > 0){
-              entryIndex = --nextIndex[position]; // first decrement and then save in the variable
-              // If it is also in newConfiguration manage to decrement also in nextIndexNewConfig
-              if(getIndex(newConfiguration, receiverAddress) != -1){
-                --nextIndexNewConfig[getIndex(newConfiguration, receiverAddress)];
-              }   
-            }     
-          }
-          else{ // If response come from a new server
-            position = getIndex(newConfiguration, receiverAddress);
-            // Avoid next entry to send is out of bound
-            entryIndex = nextIndexNewConfig[position];
-            if (entryIndex > 0){
-              entryIndex = --nextIndexNewConfig[position];
-            }
+
+        // If server in configuration
+        if(getIndex(configuration, receiverAddress) != -1){
+          position = getIndex(configuration, receiverAddress);
+          // Avoid next entry to send is out of bound
+          entryIndex = nextIndex[position];
+          if (entryIndex > 0){
+            entryIndex = --nextIndex[position]; // first decrement and then save in the variable
           }
         }
-        else{ // Not membership change occurring
-          position = getIndex(configuration, receiverAddress);
+
+        // If server in newConfiguration during a membership change
+        if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1){
+          position = getIndex(newConfiguration, receiverAddress);
           // Avoid next entry to send is out of bound
           entryIndex = nextIndexNewConfig[position];
           if (entryIndex > 0){
-            entryIndex = --nextIndex[position];
+            entryIndex = --nextIndexNewConfig[position];
           }
         }
+
         newEntry = log[entryIndex];
         newEntry.clientsData.assign(log[entryIndex].clientsData.begin(), log[entryIndex].clientsData.end());
         if(newEntry.var == 'C'){  
@@ -521,96 +526,71 @@ void Server::handleMessage(cMessage *msg)
       }
       else{ //Success == true
         int position;
-        // If membership change is occurring
-        if(configuration != newConfiguration){
-          if(getIndex(configuration, pk->getSrcAddress()) != -1){
-            position = getIndex(configuration, pk->getSrcAddress());
-            if(nextIndex[position] <= log.back().logIndex){
-              // Update the matchIndex and the NextIndex of the server who send the leader the response
-              matchIndex[position] = nextIndex[position];
-              nextIndex[position]++;
-              if(getIndex(newConfiguration, pk->getSrcAddress()) != -1){
-                matchIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())] = matchIndex[position];
-                nextIndexNewConfig[getIndex(newConfiguration, pk->getSrcAddress())] = nextIndex[position];
-              }
-              // Send if new nextIndex is not out of bound
-              if (nextIndex[position] <= log.back().logIndex){
-                log_entry newEntry;
-                newEntry = log[nextIndex[position]];
-                newEntry.clientsData.assign(log[nextIndex[position]].clientsData.begin(), log[nextIndex[position]].clientsData.end());
-                if(newEntry.var == 'C'){  
-                  newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
-                  newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
-                }
-                appendNewEntryTo(newEntry, receiverAddress, position);
-              }
-            }
-          }
-          else{
-            position = getIndex(newConfiguration, pk->getSrcAddress());
-            if(nextIndexNewConfig[position] <= log.back().logIndex){
-              matchIndexNewConfig[position] = nextIndexNewConfig[position];
-              nextIndexNewConfig[position]++;
-              if (nextIndexNewConfig[position] < log.back().logIndex){
-                log_entry newEntry;
-                newEntry = log[nextIndexNewConfig[position]];
-                newEntry.clientsData.assign(log[nextIndexNewConfig[position]].clientsData.begin(), log[nextIndexNewConfig[position]].clientsData.end());
-                if(newEntry.var == 'C'){  
-                  newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
-                  newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
-                }
-                appendNewEntryTo(newEntry, receiverAddress, position);
-              }
-              else{
-                if(checkNewServersAreUpToDate()){ // Now trigger the Cold,new append
-                  bubble("Creating C_old,new");
-                  log_entry newEntry;
-                  newEntry.term = currentTerm;
-                  newEntry.logIndex = log.back().logIndex + 1;
-                  newEntry.clientAddress = adminAddress;
-                  newEntry.var = 'C';
-                  newEntry.cOld.assign(configuration.begin(), configuration.end());
-                  newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
-                  newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
-                  log.push_back(newEntry);
-                  matchIndex[getIndex(configuration, myAddress)]++;
-                  if (getIndex(newConfiguration, myAddress) != -1)
-                  {
-                    matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
-                  }
-                  newServersCanVote = true;
-                  cancelEvent(sendHearthbeat);
-                  appendNewEntry(newEntry, false);
-                  scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); 
-                }
-              }
-            }
+        int index;
+        if(getIndex(configuration, receiverAddress) != -1){
+          position = getIndex(configuration, receiverAddress);
+          index = nextIndex[position];
+          if(index <= log.back().logIndex){
+            // Update the matchIndex and the NextIndex of the server who send the leader the response
+            matchIndex[position] = nextIndex[position];
+            nextIndex[position]++;
+            index = nextIndex[position];
           }
         }
-        else{ // Not membership change occurring
-          position = getIndex(configuration, pk->getSrcAddress());
-          if(nextIndex[position] <= log.back().logIndex){
-            // Update matchIndex and nextIndex
-            matchIndex[position] = nextIndex[position];
-            nextIndex[position]++; 
-            if (nextIndex[position] <= log.back().logIndex){
+
+        if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1){
+          position = getIndex(newConfiguration, receiverAddress);
+          index = nextIndexNewConfig[position];
+          if(index <= log.back().logIndex){
+            matchIndexNewConfig[position] = nextIndexNewConfig[position];
+            nextIndexNewConfig[position]++;
+            index = nextIndexNewConfig[position];
+          }
+        }
+
+        // Send if new index to send is not out of bound
+        if (index <= log.back().logIndex){
+          log_entry newEntry;
+          newEntry = log[index];
+          newEntry.clientsData.assign(log[index].clientsData.begin(), log[index].clientsData.end());
+          if(newEntry.var == 'C'){  
+            newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
+            newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+          }
+          appendNewEntryTo(newEntry, receiverAddress, position);
+        }
+        else{ // Case of membership change and the address come from an only NEW server which now is up to date
+          if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1){
+            if(checkNewServersAreUpToDate()){ // Now trigger the Cold,new append
+              bubble("Creating C_old,new");
               log_entry newEntry;
-              newEntry = log[nextIndex[position]];
-              newEntry.clientsData.assign(log[nextIndex[position]].clientsData.begin(), log[nextIndex[position]].clientsData.end());
-              if(newEntry.var == 'C'){  
-                newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
-                newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+              newEntry.term = currentTerm;
+              newEntry.logIndex = log.back().logIndex + 1;
+              newEntry.clientAddress = adminAddress;
+              newEntry.var = 'C';
+              newEntry.cOld.assign(configuration.begin(), configuration.end());
+              newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
+              newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
+              log.push_back(newEntry);
+              matchIndex[getIndex(configuration, myAddress)]++;
+              if (getIndex(newConfiguration, myAddress) != -1){
+                matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
               }
-              appendNewEntryTo(newEntry, receiverAddress, position);
+              newServersCanVote = true;
+              cancelEvent(sendHearthbeat);
+              appendNewEntry(newEntry, false);
+              scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); 
             }
           }
         }
 
+        // commitIndex update
         for (int newCommitIndex = commitIndex + 1; newCommitIndex < log.back().logIndex; newCommitIndex++){
           if(majority(newCommitIndex) == true && log[newCommitIndex].term == currentTerm){
             commitIndex = newCommitIndex;
           }
         }
+        // lastApplied update and command apply
         for(int i=lastApplied; i < commitIndex; i++){
           lastApplied++;
           applyCommand(log[lastApplied]);
