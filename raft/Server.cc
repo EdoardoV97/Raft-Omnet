@@ -412,7 +412,7 @@ void Server::handleMessage(cMessage *msg)
     }
 
     // Take snapshot if needed
-    if (log.size() >= par("maxLogSizeBeforeSnapshot")) {takeSnapshot();}
+    if (log.size() >= (int)par("maxLogSizeBeforeSnapshot")) {takeSnapshot();}
   }
   break;
   case RPC_REQUEST_VOTE:
@@ -1420,9 +1420,8 @@ void Server::takeSnapshot(){
       // Save state machine state
       snapshot.var = 'x';
       snapshot.value = x;
-      snapshot.oldConfiguration.assign()
-      snapshot.newConfiguration
-      // TODO: snapshot.latestConfig = newConfiguration
+      snapshot.oldConfiguration.assign(configuration.begin(), configuration.end());
+      snapshot.newConfiguration.assign(newConfiguration.begin(), configuration.end());
 
       // Delete the log till(included) the entry with lastIncludedIndex
       log.erase(log.begin(), log.begin() + i + 1); // begin() + i erase the first i elements of the log. +1 is needed since log positions start from 0
