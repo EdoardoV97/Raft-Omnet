@@ -94,7 +94,6 @@ class Server : public cSimpleModule
     void becomeFollower(RPCPacket *pkGeneric);
     void updateTerm(RPCPacket *pkGeneric);
     int getClientIndex(int clientAddress);
-    void updateLatestClientSequenceNumber(int clientAddress, int sequenceNumber);
     void sendAck(int destAddress, int seqNum);
     void sendResponseToClient(int type, int clientAddress);
     void startReadOnlyLeaderCheck();
@@ -182,18 +181,20 @@ void Server::initialize()
 
 void Server::handleMessage(cMessage *msg)
 {
-  if (msg == crashTimeoutEvent)
-  {
+  if (msg == crashTimeoutEvent){
     cancelEvent(sendHearthbeat);
     cancelEvent(electionTimeoutEvent);
     cancelEvent(minElectionTimeoutEvent);
+    for (int i = 0; i < appendEntryTimers.size() ; i++){
+      cancelEvent(appendEntryTimers[i].timeoutEvent);
+    }
     iAmCrashed = true;
     scheduleAt(simTime() + par("reviveTimeout"), reviveTimeoutEvent);
     return;
   }
 
   if(msg == reviveTimeoutEvent){
-    // Reset all original raft's volatile variables 
+    // Reset all raft's original volatile variables 
     x = 0;
     configuration.clear();
     newConfiguration.clear();
@@ -217,6 +218,8 @@ void Server::handleMessage(cMessage *msg)
     pendingReadClients.clear();
     believeCurrentLeaderExists = false;
     newServersCanVote = true;
+    RPCs.clear();
+    RPCsNewConfig.clear();
     //The replay of all the log will be triggered automatically from the protocol
     iAmCrashed = false;
 
@@ -225,8 +228,11 @@ void Server::handleMessage(cMessage *msg)
     // in fact, we can suppose that a NON_VOTING server will be recovered after a crash and turned in the same NON_VOTING state for coherence by an "admin"
     if(status != NON_VOTING){
       status = FOLLOWER;
-      // TODO become follower and set variables..., not call the method!
+      scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
+      scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent); 
     }
+
+    // TODO prendere dal log l'ultima configurazione e quindi fare le adeguate resize
     return;
   }
   
@@ -594,41 +600,21 @@ void Server::handleMessage(cMessage *msg)
         for(int i=lastApplied; i < commitIndex; i++){
           lastApplied++;
           applyCommand(log[lastApplied]);
-          if(log[lastApplied].term == currentTerm){  // TODO checkare se va creata Cnew se più avanti dopo Cold,new già non c'è
+          if(log[lastApplied].term == currentTerm){
             if(log[lastApplied].var == 'N'){
               if(waitingNoOp == true){
                 waitingNoOp = false;
                 startReadOnlyLeaderCheck();
               }
             }
+            //If Cnew is now committed
             else{
-              if(log[lastApplied].var == 'C'){ 
-                if(!log[lastApplied].cOld.empty()){ //Cold,new case: now trigger the Cnew append
-                // TODO: Aggiungere check per vedere se esiste una pending Cold,new
-                  bubble("Creating C_new");
-                  log_entry newEntry;
-                  newEntry.term = currentTerm;
-                  newEntry.logIndex = log.back().logIndex + 1;
-                  newEntry.clientAddress = log[lastApplied].clientAddress;
-                  newEntry.var = 'C';
-                  newEntry.value = log[lastApplied].value;
-                  newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
-                  // Update matchIndex to count leader vote
-                  matchIndex[getIndex(configuration, myAddress)]++;
-                  // Update also in the matchIndexNewConfig if leader is also in that new configuration.
-                  if (getIndex(newConfiguration, myAddress) != -1)
-                  {
-                    matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
-                  }
-                  // implicitly newEntry.cOld is empty (Convention: it means that it is the Cnew entry)
-                  newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
-                  log.push_back(newEntry);
-                  appendNewEntry(newEntry, false);
-                }
-                else{ //If Cnew is now committed (second phase is terminated)
+              if(log[lastApplied].var == 'C'){
+                if(log[lastApplied].cOld.empty()){
                   configuration.assign(newConfiguration.begin(), newConfiguration.end());
                   nextIndex.assign(nextIndexNewConfig.begin(), nextIndexNewConfig.end());
                   matchIndex.assign(matchIndexNewConfig.begin(), matchIndexNewConfig.end());
+                  RPCs.assign(RPCsNewConfig.begin(), RPCsNewConfig.end());
                   // If the leader is not in Cnew become follower
                   if(getIndex(newConfiguration, myAddress) == -1){
                     becomeFollower(pk);
@@ -636,11 +622,33 @@ void Server::handleMessage(cMessage *msg)
                   sendResponseToClient(WRITE, log[lastApplied].clientAddress); // This is the response to the Admin
                 }
               }
-              else{ // Write response case
+              else{ 
+                // Write response case
                 sendResponseToClient(WRITE, log[lastApplied].clientAddress);
               }
             }
-          } // TODO else case to create Cnew in case of previous leader crash before creating it?
+          }
+          // Cold,new case: now trigger the Cnew append
+          if(log[lastApplied].var == 'C' && !log[lastApplied].cOld.empty() && configuration != newConfiguration){ 
+            bubble("Creating C_new");
+            log_entry newEntry;
+            newEntry.term = currentTerm;
+            newEntry.logIndex = log.back().logIndex + 1;
+            newEntry.clientAddress = log[lastApplied].clientAddress;
+            newEntry.var = 'C';
+            newEntry.value = log[lastApplied].value;
+            newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
+            // Update matchIndex to count leader vote
+            matchIndex[getIndex(configuration, myAddress)]++;
+            // Update also in the matchIndexNewConfig if leader is also in that new configuration.
+            if (getIndex(newConfiguration, myAddress) != -1){
+              matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
+            }
+            // implicitly newEntry.cOld is empty (Convention: it means that it is the Cnew entry)
+            newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
+            log.push_back(newEntry);
+            appendNewEntry(newEntry, false);
+          }
         }
       }
     }
@@ -738,12 +746,16 @@ void Server::handleMessage(cMessage *msg)
           // Initializing nextIndexNewConfig and matchIndexNewConfig to manage servers in the newConfiguration
           nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex);
           matchIndexNewConfig.resize(newConfiguration.size(), 0);
-          // We need to copy in matchIndexNewConfig the indexes of the servers in config that are also in newConfig
+          RPCsNewConfig.clear();
+          RPCsNewConfig.resize(newConfiguration.size());
+          // We need to copy in matchIndexNewConfig the indexes of the servers in config that are also in newConfig, and copy also the RPC tracked data
           for (int i=0; i < newConfiguration.size(); i++){
             int serverInBothConfig = getIndex(configuration, newConfiguration[i]);
             if (serverInBothConfig != -1){ // Server is both in config and in newConfig
               matchIndexNewConfig[i] = matchIndex[serverInBothConfig];
               nextIndexNewConfig[i] = nextIndex[serverInBothConfig];
+              RPCsNewConfig[i].sequenceNumber = RPCs[i].sequenceNumber;
+              RPCsNewConfig[i].success = RPCs[i].success;
             }
           }
           // Start bringing up to date NEW (only) servers
@@ -889,12 +901,21 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
         newTimer.destination = configuration[i];
         newTimer.prevLogIndex = log.back().logIndex -1;
         newTimer.prevLogTerm = log[log.back().logIndex - 1].term;
-       newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
+        newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
         newTimer.entry = newEntry; // Sufficient to copy var, value, term, logIndex
         newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To deep copy
         newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
         newTimer.entry.clientsData.assign(newEntry.clientsData.begin(), newEntry.clientsData.end());
         appendEntriesRPC->setDestAddress(configuration[i]);
+
+        // Increment sequence number
+        RPCs[i].sequenceNumber++;
+        appendEntriesRPC->setSequenceNumber(RPCs[i].sequenceNumber);
+        // Also in RPCsNewConfig if the follower is also in newConfiguration
+        if(configuration != newConfiguration && getIndex(newConfiguration, configuration[i]) != -1){
+          RPCsNewConfig[getIndex(newConfiguration, configuration[i])].sequenceNumber++;
+        }
+        
 
         pk_copy = appendEntriesRPC->dup();
         if(newEntry.var=='N'){
@@ -913,7 +934,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
   if(configuration != newConfiguration){
     // Send to all followers in newConfiguration
     for (int i = 0; i < newConfiguration.size(); i++){
-      // If to avoid sending to myself and avoid sending twice (if a server is in both configuration and newConfiguration) and only if it has no pendign RPCs
+      // If to avoid sending to myself and avoid sending twice (if a server is in both configuration and newConfiguration) and only if it has no pending RPCs
       if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1 && RPCsNewConfig[i].success == true){
         append_entry_timer newTimer;
         newTimer.destination = newConfiguration[i];
@@ -925,6 +946,10 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
         newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
         newTimer.entry.clientsData.assign(newEntry.clientsData.begin(), newEntry.clientsData.end());
         appendEntriesRPC->setDestAddress(newConfiguration[i]);
+
+        // Increment sequence number
+        RPCsNewConfig[i].sequenceNumber++;
+        appendEntriesRPC->setSequenceNumber(RPCsNewConfig[i].sequenceNumber);
 
         EV << "New Entry: Index=" << newEntry.logIndex
         << " Term=" << newEntry.term
@@ -954,24 +979,24 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   appendEntriesRPC->setEntry(newEntry);
   appendEntriesRPC->setLeaderCommit(commitIndex);
   appendEntriesRPC->setSrcAddress(myAddress);
+
+  if(getIndex(configuration, destAddress) != -1){
+    RPCs[getIndex(configuration, destAddress)].sequenceNumber++;
+    appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, destAddress)].sequenceNumber);
+  }
+  if(configuration != newConfiguration && getIndex(newConfiguration, destAddress) != -1){
+    RPCsNewConfig[getIndex(newConfiguration, destAddress)].sequenceNumber++;
+    appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, destAddress)].sequenceNumber);
+  }
+
   // If NOT membership change occurring OR if it is occurring but the destination is in configuration
   if((configuration == newConfiguration) || (configuration != newConfiguration && getIndex(configuration, destAddress) != -1)){
     appendEntriesRPC->setPrevLogIndex(log[nextIndex[index]-1].logIndex); // -1 because the previous
     appendEntriesRPC->setPrevLogTerm(log[nextIndex[index]-1].term);
-    if (getIndex(configuration, destAddress) != -1){
-      RPCs[getIndex(configuration, destAddress)].sequenceNumber++;
-      appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, destAddress)].sequenceNumber);
-    }
-    if (getIndex(newConfiguration, destAddress) != -1){
-      RPCs[getIndex(newConfiguration, destAddress)].sequenceNumber++;
-      appendEntriesRPC->setSequenceNumber(RPCs[getIndex(newConfiguration, destAddress)].sequenceNumber);
-    }
   }
   else{ // A membership change is occurring and the destination is ONLY in newConfiguration (by exclusion from the IF case above)
     appendEntriesRPC->setPrevLogIndex(log[nextIndexNewConfig[index]-1].logIndex); // -1 because the previous
     appendEntriesRPC->setPrevLogTerm(log[nextIndexNewConfig[index]-1].term);
-    RPCs[getIndex(newConfiguration, destAddress)].sequenceNumber++;
-    appendEntriesRPC->setSequenceNumber(RPCs[getIndex(newConfiguration, destAddress)].sequenceNumber);   
   }
 
   // Create the associated timer to eventually resend the message if no response come back.
@@ -1174,8 +1199,8 @@ void Server::becomeLeader(){
 void Server::becomeFollower(RPCPacket *pkGeneric){
   cancelEvent(electionTimeoutEvent);
   cancelEvent(minElectionTimeoutEvent);
-  believeCurrentLeaderExists = true;
   cancelEvent(sendHearthbeat);
+  believeCurrentLeaderExists = true;
   for (int i = 0; i < appendEntryTimers.size() ; i++){
     cancelEvent(appendEntryTimers[i].timeoutEvent);
   }
@@ -1222,16 +1247,6 @@ int Server::getClientIndex(int clientAddress){
     }
   }
   return -1;
-}
-
-void Server::updateLatestClientSequenceNumber(int clientAddress, int sequenceNumber){
- for(int i=0; i<latestClientResponses.size(); i++){
-   if(latestClientResponses[i].clientAddress == clientAddress){
-     latestClientResponses[i].latestSequenceNumber = sequenceNumber;
-     return;
-   }
- }
- return;
 }
 
 void Server::sendAck(int destAddress, int seqNum){
