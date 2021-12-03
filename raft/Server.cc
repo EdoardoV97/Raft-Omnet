@@ -655,38 +655,32 @@ void Server::handleMessage(cMessage *msg)
     int sender = pk->getSrcAddress();
     //If i am still candidate
     if(status == CANDIDATE){
+      // Check if it is a valid RPC response (the one expected and if it was not already received)
+      if(!checkValidRPCResponse(receiverAddress, pk->getSequenceNumber())){break;}
+      
       // If the vote is granted
       if (pk->getVoteGranted() == true){
-        // If there a membership change is NOT occurring
-        if (newConfiguration == configuration){
-          // If the vote is granted by a server in configuration (to manage case in which before a membership change, some new servers are added but the process is not started and an election is going on)
-          if(getIndex(configuration, sender) != -1 && RPCs[getIndex(configuration, sender)].sequenceNumber == pk->getSequenceNumber()){
-            votes++;
-            RPCs[getIndex(configuration, sender)].success = true;
-          }
+
+        // If the vote is granted by a server in configuration
+        if(getIndex(configuration, sender) != -1){
+          votes++;
         }
-        else{ // If a membership change IS occurring
-          // If the vote is granted by a server in configuration
-          if(getIndex(configuration, sender) != -1 && RPCs[getIndex(configuration, sender)].sequenceNumber == pk->getSequenceNumber()){
-            votes++;
-            RPCs[getIndex(configuration, sender)].success = true;
-          }
-          // If the vote is granted by a server in newConfiguration (note: a server can be in both new and old configurations)
-          if(getIndex(newConfiguration, sender) != -1 && RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == pk->getSequenceNumber()){
-            votesNewConfig++;
-            RPCsNewConfig[getIndex(newConfiguration, sender)].success = true;
-          }
+
+        // If the vote is granted by a server in new configuration (in membership change case)
+        if(configuration != newConfiguration && getIndex(newConfiguration, sender) != -1){
+          votesNewConfig++;
         }
-      }
-      // Check majority of votes for configuration
-      if(votes > configuration.size()/2){
-        //If a membership change is NOT occurring it is sufficient
-        if(newConfiguration == configuration){
-          becomeLeader();
-        }
-        else{ // If a membership change IS taking place i must also check the other majority
-          if(votesNewConfig > newConfiguration.size()/2){
+        
+        // Check majority of votes for configuration
+        if(votes > configuration.size()/2){
+          //If a membership change is NOT occurring it is sufficient
+          if(newConfiguration == configuration){
             becomeLeader();
+          }
+          else{ // If a membership change IS taking place i must also check the other majority
+            if(votesNewConfig > newConfiguration.size()/2){
+              becomeLeader();
+            }
           }
         }
       }
