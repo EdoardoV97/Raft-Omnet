@@ -670,7 +670,7 @@ void Server::handleMessage(cMessage *msg)
         if(configuration != newConfiguration && getIndex(newConfiguration, sender) != -1){
           votesNewConfig++;
         }
-        
+
         // Check majority of votes for configuration
         if(votes > configuration.size()/2){
           //If a membership change is NOT occurring it is sufficient
@@ -877,7 +877,7 @@ void Server::handleMessage(cMessage *msg)
 bool Server::checkValidRPCResponse(int sender, int SN){
   bool result = false;
 
-  // Check if server is one of configuration (even if membership change or not)
+  // Check if server is one of configuration (even if membership change or not) and the sequence numbers matches and not yet received
   if(getIndex(configuration, sender) != -1 && RPCs[getIndex(configuration, sender)].sequenceNumber == SN && RPCs[getIndex(configuration, sender)].success == false){
     RPCs[getIndex(configuration, sender)].success = true;
     result = true;
@@ -885,7 +885,7 @@ bool Server::checkValidRPCResponse(int sender, int SN){
   else{
     result= false;
   }
-  // Check if server is one of newConfiguration if a membership change is occurring (Note: if a server i both in "configuration" and "newConfiguration", it will pass this "if" and the one above exactly with same behaviour beacuse RPCs and RPCsNewConfig for him will be equals)
+  // Check if server is one of newConfiguration if a membership change is occurring and the sequence numbers matches and not yet received (Note: if a server i both in "configuration" and "newConfiguration", it will pass this "if" and the one above exactly with same behaviour beacuse RPCs and RPCsNewConfig for him will be equals)
   if(configuration != newConfiguration && getIndex(newConfiguration, sender) != -1 && RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == SN && RPCsNewConfig[getIndex(newConfiguration, sender)].success == false){
     RPCsNewConfig[getIndex(newConfiguration, sender)].success = true;
     result = true;
