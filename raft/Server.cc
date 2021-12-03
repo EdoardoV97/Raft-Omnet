@@ -102,7 +102,7 @@ class Server : public cSimpleModule
     void sendHeartbeatToFollower();
     void sendRequestVote();
     void takeSnapshot();
-    bool checkValidRPCResponse();
+    bool checkValidRPCResponse(int sender, int SN);
 };
 
 Define_Module(Server);
@@ -473,7 +473,7 @@ void Server::handleMessage(cMessage *msg)
     if(status == LEADER){
       receiverAddress = pk->getSrcAddress();
       // Check if it is a valid RPC response (the one expected and if it was not already received)
-      if(!checkValidRPCResponse(receiverAddress)){break;}
+      if(!checkValidRPCResponse(receiverAddress, pk->getSequenceNumber())){break;}
       
       for(int i=0; i < appendEntryTimers.size() ; i++){
         if (receiverAddress == appendEntryTimers[i].destination){
@@ -805,7 +805,7 @@ void Server::handleMessage(cMessage *msg)
 
     if(status == LEADER){
       // Check if it is a valid RPC response (the one expected, and not already received)
-      if(!checkValidRPCResponse(sender)){break;}
+      if(!checkValidRPCResponse(sender, pk->getSequenceNumber())){break;}
       
       if(countingFeedback == true){
         // If the sender is in configuration
@@ -852,11 +852,11 @@ void Server::handleMessage(cMessage *msg)
   delete pkGeneric;  
 }
 
-bool Server::checkValidRPCResponse(int sender){
+bool Server::checkValidRPCResponse(int sender, int SN){
   bool result = false;
 
   // Check if server is one of configuration (even if membership change or not)
-  if(getIndex(configuration, sender) != -1 && RPCs[getIndex(configuration, sender)].sequenceNumber == pk->getSequenceNumber() && RPCs[getIndex(configuration, sender)].success == false){
+  if(getIndex(configuration, sender) != -1 && RPCs[getIndex(configuration, sender)].sequenceNumber == SN && RPCs[getIndex(configuration, sender)].success == false){
     RPCs[getIndex(configuration, sender)].success = true;
     result = true;
   }
@@ -864,7 +864,7 @@ bool Server::checkValidRPCResponse(int sender){
     result= false;
   }
   // Check if server is one of newConfiguration if a membership change is occurring (Note: if a server i both in "configuration" and "newConfiguration", it will pass this "if" and the one above exactly with same behaviour beacuse RPCs and RPCsNewConfig for him will be equals)
-  if(configuration != newConfiguration && getIndex(newConfiguration, sender) != -1 && RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == pk->getSequenceNumber() && RPCsNewConfig[getIndex(newConfiguration, sender)].success == false){
+  if(configuration != newConfiguration && getIndex(newConfiguration, sender) != -1 && RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == SN && RPCsNewConfig[getIndex(newConfiguration, sender)].success == false){
     RPCsNewConfig[getIndex(newConfiguration, sender)].success = true;
     result = true;
   }
@@ -1088,7 +1088,7 @@ void Server::applyCommand(log_entry entry){
 void Server::replayLog(){
   for (int i = 0; i < log.size(); i++){
     log_entry entry = log[i];
-    applyCommand[entry];
+    applyCommand(entry);
     if (entry.var == 'C'){
       if(!entry.cOld.empty()){ // Cold,new case
         configuration.assign(entry.cOld.begin(), entry.cOld.end());
