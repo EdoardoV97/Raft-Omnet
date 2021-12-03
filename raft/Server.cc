@@ -240,7 +240,9 @@ void Server::handleMessage(cMessage *msg)
       scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
       scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent); 
     }
-
+    
+    // If a snapshot is available
+    if (snapshot.value != -1){applySnapshot();}
     replayLog();
     return;
   }
