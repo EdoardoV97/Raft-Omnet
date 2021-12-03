@@ -51,6 +51,8 @@ class Server : public cSimpleModule
     RPCRequestVotePacket *requestVoteRPC = nullptr;
     RPCRequestVoteResponsePacket *requestVoteResponseRPC = nullptr;
     RPCInstallSnapshotPacket *installSnapshotRPC = nullptr;
+    RPCInstallSnapshotResponsePacket *installSnapshotResponseRPC = nullptr;
+
     RPCClientCommandResponsePacket *clientCommandResponseRPC = nullptr;
     RPCAckPacket *ACK;
 
@@ -102,6 +104,10 @@ class Server : public cSimpleModule
     void sendHeartbeatToFollower();
     void sendRequestVote();
     void takeSnapshot();
+    // Return position in log, if entryIndex is found. Otherwise -1
+    int checkEntryIndexIsInLog(int entryIndex);
+    void sendSnapshot();
+    void sendSnapshotResponse();
 };
 
 Define_Module(Server);
@@ -230,7 +236,6 @@ void Server::handleMessage(cMessage *msg)
     return;
   }
   
-
   if(msg == sendHearthbeat){
     sendHeartbeatToFollower();
     return;
@@ -249,6 +254,7 @@ void Server::handleMessage(cMessage *msg)
     believeCurrentLeaderExists = false;
     return;
   }
+
 
   // Retry append entries if an appendEntryTimer is fired 
   for (int i = 0; i < appendEntryTimers.size() ; i++){
@@ -464,10 +470,7 @@ void Server::handleMessage(cMessage *msg)
     RPCAppendEntriesResponsePacket *pk = check_and_cast<RPCAppendEntriesResponsePacket *>(pkGeneric);
     if(status == LEADER){
       receiverAddress = pk->getSrcAddress();
-      // If a very late message coming from someone from before a membership change already completed (which didn't include him in the new configuration)
-      if (getIndex(configuration, receiverAddress) == -1 && getIndex(newConfiguration, receiverAddress) == -1){
-        break;
-      }
+
       // Check sequence number if in configuration
       if(getIndex(configuration, receiverAddress) != -1 && pk->getSequenceNumber() == RPCs[getIndex(configuration, receiverAddress)].sequenceNumber){
         RPCs[getIndex(configuration, receiverAddress)].success = true;
@@ -493,31 +496,31 @@ void Server::handleMessage(cMessage *msg)
 
       if(pk->getSuccess() == false){
         int position;
-        int entryIndex;
+        int index;
         log_entry newEntry;
 
         // If server in configuration
         if(getIndex(configuration, receiverAddress) != -1){
           position = getIndex(configuration, receiverAddress);
-          // Avoid next entry to send is out of bound
-          entryIndex = nextIndex[position];
-          if (entryIndex > 0){
-            entryIndex = --nextIndex[position]; // first decrement and then save in the variable
-          }
+          index = --nextIndex[position]; // first decrement and then save in the variable
         }
 
         // If server in newConfiguration during a membership change
         if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1){
           position = getIndex(newConfiguration, receiverAddress);
-          // Avoid next entry to send is out of bound
-          entryIndex = nextIndexNewConfig[position];
-          if (entryIndex > 0){
-            entryIndex = --nextIndexNewConfig[position];
-          }
+          index = --nextIndexNewConfig[position];
         }
 
-        newEntry = log[entryIndex];
-        newEntry.clientsData.assign(log[entryIndex].clientsData.begin(), log[entryIndex].clientsData.end());
+        // Check if index of entry to send is in log of LEADER, otherwise mean that we need to send a Snapshot to the follower to update him
+        index = checkEntryIndexIsInLog(index);
+        if (index == -1){
+          sendSnapshot();
+          break;
+        }
+
+        // Send the entry
+        newEntry = log[index];
+        newEntry.clientsData.assign(log[index].clientsData.begin(), log[index].clientsData.end());
         if(newEntry.var == 'C'){  
           newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
           newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
@@ -527,29 +530,56 @@ void Server::handleMessage(cMessage *msg)
       else{ //Success == true
         int position;
         int index;
+
         if(getIndex(configuration, receiverAddress) != -1){
           position = getIndex(configuration, receiverAddress);
-          index = nextIndex[position];
-          if(index <= log.back().logIndex){
-            // Update the matchIndex and the NextIndex of the server who send the leader the response
-            matchIndex[position] = nextIndex[position];
-            nextIndex[position]++;
-            index = nextIndex[position];
-          }
+          // Update matchIndex and nextIndex
+          matchIndex[position] = nextIndex[position];
+          index = ++nextIndex[position];
         }
 
+
+        // Configuration change and follower also in new config
         if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1){
-          position = getIndex(newConfiguration, receiverAddress);
-          index = nextIndexNewConfig[position];
-          if(index <= log.back().logIndex){
-            matchIndexNewConfig[position] = nextIndexNewConfig[position];
-            nextIndexNewConfig[position]++;
-            index = nextIndexNewConfig[position];
-          }
+          position = getIndex(newConfiguration, receiverAddress);  
+          // Update matchIndex and nextIndex
+          matchIndexNewConfig[position] = nextIndexNewConfig[position];
+          index = ++nextIndexNewConfig[position];
         }
 
-        // Send if new index to send is not out of bound
-        if (index <= log.back().logIndex){
+
+        // If nextIndex is not in any log entry ==> LEADER may have delete the entry cause of snapshotting
+        if(checkEntryIndexIsInLog(index) == -1){
+          // If nextIndex is in snapshot, send snapshot. Else means that FOLLOWER is up to date
+          if(index <= snapshot.lastIncludedIndex) {sendSnapshot();}
+          else{
+            // Case of membership change and the address come from an only NEW server which now is up to date
+            if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1){
+              if(checkNewServersAreUpToDate()){ // Now trigger the Cold,new append
+                bubble("Creating C_old,new");
+                log_entry newEntry;
+                newEntry.term = currentTerm;
+                newEntry.logIndex = log.back().logIndex + 1;
+                newEntry.clientAddress = adminAddress;
+                newEntry.var = 'C';
+                newEntry.cOld.assign(configuration.begin(), configuration.end());
+                newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
+                newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
+                log.push_back(newEntry);
+                matchIndex[getIndex(configuration, myAddress)]++;
+                if (getIndex(newConfiguration, myAddress) != -1){
+                  matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
+                }
+                newServersCanVote = true;
+                cancelEvent(sendHearthbeat);
+                appendNewEntry(newEntry, false);
+                scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); 
+              }
+            }
+          }
+        }
+        else{
+          index = checkEntryIndexIsInLog(index);
           log_entry newEntry;
           newEntry = log[index];
           newEntry.clientsData.assign(log[index].clientsData.begin(), log[index].clientsData.end());
@@ -559,37 +589,14 @@ void Server::handleMessage(cMessage *msg)
           }
           appendNewEntryTo(newEntry, receiverAddress, position);
         }
-        else{ // Case of membership change and the address come from an only NEW server which now is up to date
-          if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1){
-            if(checkNewServersAreUpToDate()){ // Now trigger the Cold,new append
-              bubble("Creating C_old,new");
-              log_entry newEntry;
-              newEntry.term = currentTerm;
-              newEntry.logIndex = log.back().logIndex + 1;
-              newEntry.clientAddress = adminAddress;
-              newEntry.var = 'C';
-              newEntry.cOld.assign(configuration.begin(), configuration.end());
-              newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
-              newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
-              log.push_back(newEntry);
-              matchIndex[getIndex(configuration, myAddress)]++;
-              if (getIndex(newConfiguration, myAddress) != -1){
-                matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
-              }
-              newServersCanVote = true;
-              cancelEvent(sendHearthbeat);
-              appendNewEntry(newEntry, false);
-              scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); 
-            }
-          }
-        }
 
         // commitIndex update
-        for (int newCommitIndex = commitIndex + 1; newCommitIndex < log.back().logIndex; newCommitIndex++){
+        for (int newCommitIndex = commitIndex + 1; !log.empty() && newCommitIndex < log.back().logIndex; newCommitIndex++){
           if(majority(newCommitIndex) == true && log[newCommitIndex].term == currentTerm){
             commitIndex = newCommitIndex;
           }
         }
+
         // lastApplied update and command apply
         for(int i=lastApplied; i < commitIndex; i++){
           lastApplied++;
@@ -857,7 +864,25 @@ void Server::handleMessage(cMessage *msg)
   }
   break;
   case RPC_INSTALL_SNAPSHOT:
-  {}
+  {
+    RPCInstallSnapshotPacket *pk = check_and_cast<RPCInstallSnapshotPacket *>(pkGeneric);
+
+    // If term in packet < currentTerm, reply immediately
+    if (pk->getTerm() < currentTerm){
+      sendSnapshotResponse(pk->getSrcAddress());
+      break;
+    }
+
+    // Update the leader address
+    leaderAddress = pk->getLeaderId();
+
+
+    int index = pk->getLastIncludedIndex();
+    if (checkEntryIndexIsInLog(index) == -1){
+      
+    }
+
+  }
   break;
   case RPC_INSTALL_SNAPSHOT_RESPONSE:
   {}
@@ -1410,6 +1435,46 @@ void Server::takeSnapshot(){
   }
 }
 
+int Server::checkEntryIndexIsInLog(int entryIndex){
+  for (int i=0; i<log.size(); i++){
+
+    // If we found the entryIndex in the log, return the position where we found the match
+    if(log[i].logIndex == entryIndex){
+      return i;
+    }
+  }
+  // If entryIndex not found, or log is empty because is all in snapshot
+  return -1; 
+}
+
+void Server::sendSnapshot(int destAddress){
+  installSnapshotRPC = new RPCInstallSnapshotPacket("RPC_INSTALL_SNAPSHOT", RPC_INSTALL_SNAPSHOT);
+  installSnapshotRPC->setSrcAddress(myAddress);
+  installSnapshotRPC->setDestAddress(destAddress);
+  installSnapshotRPC->setSequenceNumber();
+  installSnapshotRPC->setTerm(currentTerm);
+  installSnapshotRPC->setLeaderId(myAddress);
+  installSnapshotRPC->setLastIncludedIndex(snapshot.lastIncludedIndex);
+  installSnapshotRPC->setLastIncludedTerm(snapshot.lastIncludedTerm);
+
+  // If NOT membership change occurring OR if it is occurring but the destination is in configuration
+  if((configuration == newConfiguration) || (configuration != newConfiguration && getIndex(configuration, destAddress) != -1)){
+    int sn = RPCs[getIndex(configuration, destAddress)].sequenceNumber++;
+    installSnapshotRPC->setSequenceNumber(sn);
+  }
+  else{ // A membership change is occurring and the destination is ONLY in newConfiguration (by exclusion from the IF case above)
+  }
+
+}
+
+void Server::sendSnapshotResponse(int destAddress){
+  installSnapshotResponseRPC = new RPCInstallSnapshotResponsePacket("RPC_INSTALL_SNAPSHOT_RESPONSE", RPC_INSTALL_SNAPSHOT_RESPONSE);
+  installSnapshotResponseRPC->setSrcAddress(myAddress);
+  installSnapshotResponseRPC->setDestAddress(destAddress);
+  installSnapshotResponseRPC->setTerm(currentTerm);
+  //installSnapshotResponseRPC->setSequenceNumber();
+}
+
 void Server::refreshDisplay() const
 {
     char buf[50];
@@ -1444,7 +1509,6 @@ void Server::refreshDisplay() const
 std::ostream& operator<<(std::ostream& os, const vector<log_entry> log){
   for (int i = 0; i < log.size(); i++){
     os << "{index=" << log[i].logIndex << ",term=" << log[i].term << "} "; // no endl!
-
   }
   return os;
 }

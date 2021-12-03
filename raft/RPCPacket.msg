@@ -5,6 +5,7 @@ cplusplus {{
 struct log_entry;
 struct clients_data;
 struct cluster_configuration;
+struct snapshot_file;
 
 enum RPCPacketType
 {
@@ -78,8 +79,9 @@ packet RPCInstallSnapshotPacket extends RPCPacket
 {
     int term;               // leader's term
     int leaderId;           // leader identifier so follower can redirect clients --> index of leader gate port in the Switch
-    int lastIncludedIndex;
-    int lastIncludedTerm;
+    int lastIncludedIndex;  // the snapshot replace all entries up through and including this index
+    int lastIncludedTerm;   // term associated to lastIncludedIndex entry
+    snapshot_file snapshot;
 };
 
 packet RPCInstallSnapshotResponsePacket extends RPCPacket
