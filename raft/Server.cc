@@ -106,9 +106,10 @@ class Server : public cSimpleModule
     void takeSnapshot();
     // Return position in log, if entryIndex is found. Otherwise -1
     int checkEntryIndexIsInLog(int entryIndex);
-    void sendSnapshot();
-    void sendSnapshotResponse();
+    void sendSnapshot(int destAddress));
+    void sendSnapshotResponse(int destAddress));
     bool checkValidRPCResponse(int sender, int SN);
+    void applySnapshot();
 };
 
 Define_Module(Server);
@@ -1225,10 +1226,20 @@ void Server::becomeLeader(){
   matchIndex.clear();
   nextIndex.resize(configuration.size(), log.back().logIndex + 1);
   matchIndex.resize(configuration.size(), 0);
+  RPCs.clear();
+  RPCs.resize(configuration.size());
   // If i become leader in a membership change phase
   if(configuration != newConfiguration){
     nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex + 1);
     matchIndexNewConfig.resize(newConfiguration.size(), 0);
+    RPCsNewConfig.clear();
+    RPCsNewConfig.resize(newConfiguration.size()); 
+  }
+
+  // If snapshotFile is NOT empty
+  if (snapshot.value != -1){ 
+    commitIndex = snapshot.lastIncludedIndex;
+    lastApplied = commitIndex;
   }
 
   log_entry newEntry;
@@ -1462,8 +1473,9 @@ void Server::takeSnapshot(){
       // Save state machine state
       snapshot.var = 'x';
       snapshot.value = x;
-      snapshot.oldConfiguration.assign(configuration.begin(), configuration.end());
+      snapshot.configuration.assign(configuration.begin(), configuration.end());
       snapshot.newConfiguration.assign(newConfiguration.begin(), configuration.end());
+      snapshot.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
 
       // Delete the log till(included) the entry with lastIncludedIndex
       log.erase(log.begin(), log.begin() + i + 1); // begin() + i erase the first i elements of the log. +1 is needed since log positions start from 0
@@ -1510,6 +1522,31 @@ void Server::sendSnapshotResponse(int destAddress){
   installSnapshotResponseRPC->setDestAddress(destAddress);
   installSnapshotResponseRPC->setTerm(currentTerm);
   //installSnapshotResponseRPC->setSequenceNumber();
+}
+
+void Server::applySnapshot(){
+
+  // Update currentTerm
+  currentTerm = snapshot.lastIncludedTerm;
+
+  // Update commitIndex, state machine, and lastApplied
+  commitIndex = snapshot.lastIncludedIndex;
+  switch (snapshot.var)
+  {
+  case 'x':
+    x = snapshot.value;
+    break; 
+  default:
+    break;
+  }
+  lastApplied = commitIndex;
+
+  // Update clientsData
+  latestClientResponses.assign(snapshot.clientsData.begin(), snapshot.clientsData.end());
+
+  // Update configurations
+  configuration.assign(snapshot.configuration.begin(), snapshot.configuration.end());
+  newConfiguration.assign(snapshot.newConfiguration.begin(), snapshot.newConfiguration.end());
 }
 
 void Server::refreshDisplay() const

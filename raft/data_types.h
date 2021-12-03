@@ -59,8 +59,10 @@ struct snapshot_file
     int lastIncludedTerm;
     // State machine state
     char var;
-    int value;
+    int value = -1; // Convention to indicate snapshot file void
     // Last known config
-    vector<int> oldConfiguration;
+    vector<int> configuration;
     vector<int> newConfiguration;
+    // Latest response to Client
+    vector<latest_client_response> clientsData;
 };
