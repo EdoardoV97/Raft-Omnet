@@ -89,6 +89,7 @@ class Server : public cSimpleModule
     void appendNewEntryTo(log_entry newEntry, int destAddress, int index);
     bool majority(int N);
     void applyCommand(log_entry entry);
+    void replayLog();
     void becomeLeader();
     void becomeCandidate();
     void becomeFollower(RPCPacket *pkGeneric);
@@ -101,6 +102,7 @@ class Server : public cSimpleModule
     void sendHeartbeatToFollower();
     void sendRequestVote();
     void takeSnapshot();
+    bool checkValidRPCResponse();
 };
 
 Define_Module(Server);
@@ -232,7 +234,7 @@ void Server::handleMessage(cMessage *msg)
       scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent); 
     }
 
-    // TODO prendere dal log l'ultima configurazione e quindi fare le adeguate resize
+    replayLog();
     return;
   }
   
@@ -470,24 +472,8 @@ void Server::handleMessage(cMessage *msg)
     RPCAppendEntriesResponsePacket *pk = check_and_cast<RPCAppendEntriesResponsePacket *>(pkGeneric);
     if(status == LEADER){
       receiverAddress = pk->getSrcAddress();
-      // If a very late message coming from someone from before a membership change already completed (which didn't include him in the new configuration)
-      if (getIndex(configuration, receiverAddress) == -1 && getIndex(newConfiguration, receiverAddress) == -1){
-        break;
-      }
-      // Check sequence number if in configuration
-      if(getIndex(configuration, receiverAddress) != -1 && pk->getSequenceNumber() == RPCs[getIndex(configuration, receiverAddress)].sequenceNumber){
-        RPCs[getIndex(configuration, receiverAddress)].success = true;
-      }
-      else{
-        break;
-      }
-      // Check sequence number if membership change in newConfiguration
-      if (configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && pk->getSequenceNumber() == RPCsNewConfig[getIndex(newConfiguration, receiverAddress)].sequenceNumber){
-        RPCsNewConfig[getIndex(newConfiguration, receiverAddress)].success = true;
-      }
-      else{
-        break;
-      }
+      // Check if it is a valid RPC response (the one expected and if it was not already received)
+      if(!checkValidRPCResponse(receiverAddress)){break;}
       
       for(int i=0; i < appendEntryTimers.size() ; i++){
         if (receiverAddress == appendEntryTimers[i].destination){
@@ -607,8 +593,7 @@ void Server::handleMessage(cMessage *msg)
                 startReadOnlyLeaderCheck();
               }
             }
-            //If Cnew is now committed
-            else{
+            else{ //If Cnew is now committed
               if(log[lastApplied].var == 'C'){
                 if(log[lastApplied].cOld.empty()){
                   configuration.assign(newConfiguration.begin(), newConfiguration.end());
@@ -817,53 +802,40 @@ void Server::handleMessage(cMessage *msg)
   {
     RPCAckPacket *pk = check_and_cast<RPCAckPacket *>(pkGeneric);
     int sender = pk->getSrcAddress();
+
     if(status == LEADER){
+      // Check if it is a valid RPC response (the one expected, and not already received)
+      if(!checkValidRPCResponse(sender)){break;}
+      
       if(countingFeedback == true){
-      // If NOT membership change occurring
-      if(configuration == newConfiguration){
-        // If the sequence number match with it's last one and was not yet received
-        if(RPCs[getIndex(configuration, sender)].sequenceNumber == pk->getSequenceNumber() && RPCs[getIndex(configuration, sender)].success == false){
-          RPCs[getIndex(configuration, sender)].success = true;
-          acks++;
-        }
-      }
-      else{ // Membership change occurring
         // If the sender is in configuration
         if(getIndex(configuration, sender) != -1){
-          // If the sequence number match with it's last one and was not yet received
-          if(RPCs[getIndex(configuration, sender)].sequenceNumber == pk->getSequenceNumber() && RPCs[getIndex(configuration, sender)].success == false){
-            RPCs[getIndex(configuration, sender)].success = true;
-            acks++;
-          }
+          acks++;
         }
-        // If the sender is in newConfiguration
-        if(getIndex(newConfiguration, sender) != -1){
-          // If the sequence number match with it's the last one and was not yet received
-          if(RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == pk->getSequenceNumber() && RPCsNewConfig[getIndex(newConfiguration, sender)].success == false){
-            RPCsNewConfig[getIndex(newConfiguration, sender)].success = true;
-            acksNewConf++;
-          }
-        } 
-      }
-      // If majority of heartbeat exchanged, is possible to finalize the pending read-only request (NO membership change occurring)
-      if(configuration == newConfiguration || newServersCanVote == false){
-        if(acks > configuration.size()/2){
-          countingFeedback = false;
-          for (int i = 0; i < pendingReadClients.size(); i++){
-            sendResponseToClient(READ, pendingReadClients[i]);
-          }
-          pendingReadClients.clear();
-          }
+        // If the sender is in (or also) newConfiguration during a membership change
+        if(configuration != newConfiguration && getIndex(newConfiguration, sender) != -1){
+          acksNewConf++;
         }
-        else{ // Membership change occurring, acks must be received by both majority
-          if(acks > configuration.size()/2 && acksNewConf > newConfiguration.size()/2){
+        
+        // If majority of heartbeat exchanged, is possible to finalize the pending read-only request (NO membership change occurring)
+        if(configuration == newConfiguration || newServersCanVote == false){
+          if(acks > configuration.size()/2){
             countingFeedback = false;
             for (int i = 0; i < pendingReadClients.size(); i++){
               sendResponseToClient(READ, pendingReadClients[i]);
             }
             pendingReadClients.clear();
+            }
           }
-        }
+          else{ // Membership change occurring, acks must be received by both majority
+            if(acks > configuration.size()/2 && acksNewConf > newConfiguration.size()/2){
+              countingFeedback = false;
+              for (int i = 0; i < pendingReadClients.size(); i++){
+                sendResponseToClient(READ, pendingReadClients[i]);
+              }
+              pendingReadClients.clear();
+            }
+          }
       }
     }
   }
@@ -878,6 +850,29 @@ void Server::handleMessage(cMessage *msg)
   }
 
   delete pkGeneric;  
+}
+
+bool Server::checkValidRPCResponse(int sender){
+  bool result = false;
+
+  // Check if server is one of configuration (even if membership change or not)
+  if(getIndex(configuration, sender) != -1 && RPCs[getIndex(configuration, sender)].sequenceNumber == pk->getSequenceNumber() && RPCs[getIndex(configuration, sender)].success == false){
+    RPCs[getIndex(configuration, sender)].success = true;
+    result = true;
+  }
+  else{
+    result= false;
+  }
+  // Check if server is one of newConfiguration if a membership change is occurring (Note: if a server i both in "configuration" and "newConfiguration", it will pass this "if" and the one above exactly with same behaviour beacuse RPCs and RPCsNewConfig for him will be equals)
+  if(configuration != newConfiguration && getIndex(newConfiguration, sender) != -1 && RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == pk->getSequenceNumber() && RPCsNewConfig[getIndex(newConfiguration, sender)].success == false){
+    RPCsNewConfig[getIndex(newConfiguration, sender)].success = true;
+    result = true;
+  }
+  else{
+    result = false;
+  }
+
+  return result;
 }
 
 void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
@@ -1075,17 +1070,47 @@ bool Server::majority(int N){
 }
 
 void Server::applyCommand(log_entry entry){
-  if(entry.value == -2 || entry.var == 'C'){ //no_op entry, // TODO: si può usare entry.var == 'N' al post di -2?
-    return;
-  }
-
   switch (entry.var){
   case 'x':
     x = entry.value;
     break;
-  
+  case 'N': //no_op entry
+    break;
+  case 'C': // membership change entry (Cold,new or Cnew)
+    break;
   default:
     break;
+  }
+  latestClientResponses.assign(entry.clientsData.begin(), entry.clientsData.end());
+  return;
+}
+
+void Server::replayLog(){
+  for (int i = 0; i < log.size(); i++){
+    log_entry entry = log[i];
+    applyCommand[entry];
+    if (entry.var == 'C'){
+      if(!entry.cOld.empty()){ // Cold,new case
+        configuration.assign(entry.cOld.begin(), entry.cOld.end());
+        newConfiguration.assign(entry.cNew.begin(), entry.cNew.end());
+
+        RPCsNewConfig.clear();
+        RPCsNewConfig.resize(newConfiguration.size());
+
+        for (int i=0; i < newConfiguration.size(); i++){
+          int serverInBothConfig = getIndex(configuration, newConfiguration[i]);
+          if (serverInBothConfig != -1){ // Server is both in config and in newConfig
+            RPCsNewConfig[i].sequenceNumber = RPCs[i].sequenceNumber;
+            RPCsNewConfig[i].success = RPCs[i].success;
+          }
+        }
+      }
+      else{ // Cnew case
+        newConfiguration.assign(entry.cNew.begin(), entry.cNew.end());
+        configuration.assign(newConfiguration.begin(), newConfiguration.end());
+        RPCs.assign(RPCsNewConfig.begin(), RPCsNewConfig.end());
+      }
+    }
   }
   return;
 }
