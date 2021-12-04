@@ -54,7 +54,7 @@ class Server : public cSimpleModule
     RPCInstallSnapshotResponsePacket *installSnapshotResponseRPC = nullptr;
 
     RPCClientCommandResponsePacket *clientCommandResponseRPC = nullptr;
-    RPCAckPacket *ACK;
+    RPCAckPacket *ACK = nullptr;
 
     // State Machine of the server
     int x = 0;
@@ -106,8 +106,8 @@ class Server : public cSimpleModule
     void takeSnapshot();
     // Return position in log, if entryIndex is found. Otherwise -1
     int checkEntryIndexIsInLog(int entryIndex);
-    void sendSnapshot(int destAddress));
-    void sendSnapshotResponse(int destAddress));
+    void sendSnapshot(int destAddress);
+    void sendSnapshotResponse(int destAddress);
     bool checkValidRPCResponse(int sender, int SN);
     void applySnapshot();
 };
@@ -197,6 +197,7 @@ void Server::handleMessage(cMessage *msg)
     for (int i = 0; i < appendEntryTimers.size() ; i++){
       cancelEvent(appendEntryTimers[i].timeoutEvent);
     }
+    // TODO cancel also the events of snapshotting
     iAmCrashed = true;
     scheduleAt(simTime() + par("reviveTimeout"), reviveTimeoutEvent);
     return;
@@ -312,6 +313,11 @@ void Server::handleMessage(cMessage *msg)
   }
     
   RPCPacket *pkGeneric = check_and_cast<RPCPacket *>(msg);
+
+  // Simulate packet dropping on the receiver
+  if(dblrand() >= par("errorRateThreshold").doubleValue()){
+    return;
+  }
 
   updateTerm(pkGeneric);
 
