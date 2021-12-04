@@ -337,17 +337,41 @@ void Server::handleMessage(cMessage *msg)
       believeCurrentLeaderExists = true;
       cancelEvent(electionTimeoutEvent);
       receiverAddress = pk->getSrcAddress();
+
       //1) Reply false if term < currentTerm 2)Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm 
-      // To avoid out of bound access
       bool partialEval = false;
-      //EV << pk->getPrevLogIndex() << "<" << log.back().logIndex << endl;
-      if(pk->getPrevLogIndex() < log.back().logIndex){
-        //EV << log[pk->getPrevLogIndex()].term << "!=" << pk->getPrevLogTerm() << endl;
-        if(log[pk->getPrevLogIndex()].term != pk->getPrevLogTerm()){
-          partialEval = true;
+      int index;
+
+      // Since every Server when it borns pushes one entry in the log, the log can be empty only if a snapshot has been taken
+      if(!log.empty()){
+        // Check that prevLogIndex is not smaller than Index of first entry in the log. Else means that we need to check the snapshot
+        index = checkEntryIndexIsInLog(pk->getPrevLogIndex());
+        if (index != -1){
+          if(log[index].term != pk->getPrevLogTerm()){
+            partialEval = true;
+          }
+          
+        }
+        else{
+          // If snapshot exists
+          if(snapshot.value != -1){
+            if (pk->getPrevLogIndex() != snapshot.lastIncludedIndex){
+              if (pk->getPrevLogTerm() != snapshot.lastIncludedTerm){
+                partialEval = true;
+              }
+            }
+          }
         }
       }
-      else{partialEval = true;}      
+      // Log is empty, so we are sure snapshot exists
+      else{
+        if (pk->getPrevLogIndex() != snapshot.lastIncludedIndex){
+          if (pk->getPrevLogTerm() != snapshot.lastIncludedTerm){
+            partialEval = true;
+          }
+        }
+      }     
+
       if((pk->getTerm() < currentTerm) || partialEval){
         appendEntriesResponseRPC = new RPCAppendEntriesResponsePacket("RPC_APPEND_ENTRIES_RESPONSE", RPC_APPEND_ENTRIES_RESPONSE);
         appendEntriesResponseRPC->setSuccess(false);
@@ -356,16 +380,19 @@ void Server::handleMessage(cMessage *msg)
         appendEntriesResponseRPC->setDestAddress(receiverAddress);
         appendEntriesResponseRPC->setSequenceNumber(pk->getSequenceNumber());
         send(appendEntriesResponseRPC, "port$o");
-        }
+      }
       else {
+
         //3)If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it.
         if (log[pk->getEntry().logIndex].logIndex == pk->getEntry().logIndex && log[pk->getEntry().logIndex].term != pk->getEntry().term){
           log.resize(pk->getEntry().logIndex);
         }
+
         //4)Append any new entries not already in the log.
         if(log.back().logIndex != pk->getEntry().logIndex){
           log.push_back(pk->getEntry());
         }
+
         //5)If leaderCommit > commitIndex, set commitIndex = min (leaderCommit, index of last new entry).
         if(pk->getLeaderCommit() > commitIndex){
           if(pk->getLeaderCommit() < pk->getEntry().logIndex){
@@ -389,7 +416,8 @@ void Server::handleMessage(cMessage *msg)
             configuration.assign(newConfiguration.begin(), newConfiguration.end()); // va fatto solo in quelle incluse in Cnew?
           }
         } 
-        //Reply true
+
+        //If we arrive here, Reply true
         appendEntriesResponseRPC = new RPCAppendEntriesResponsePacket("RPC_APPEND_ENTRIES_RESPONSE", RPC_APPEND_ENTRIES_RESPONSE);
         appendEntriesResponseRPC->setSuccess(true);
         appendEntriesResponseRPC->setTerm(currentTerm);
