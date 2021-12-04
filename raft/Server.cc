@@ -158,6 +158,7 @@ void Server::initialize()
   WATCH(status);
   WATCH(newServersCanVote);
   WATCH(log);
+  WATCH(RPCs);
 
   // Initialize the initial configuration
   initializeConfiguration();
@@ -168,7 +169,7 @@ void Server::initialize()
 
   
 
-  //Pushing the initial configuration in the log
+  //Pushing the initial configuration in the log   //TODO anche nei nuovi serve ancora?
   log_entry firstEntry;
   firstEntry.var = 'C';
   firstEntry.term = currentTerm;
@@ -252,14 +253,13 @@ void Server::handleMessage(cMessage *msg)
     return;
   }
   
-
   if(msg == sendHearthbeat){
     sendHeartbeatToFollower();
     return;
   }
 
   if(msg == electionTimeoutEvent){
-    if (status == NON_VOTING){return;}
+    if(status == NON_VOTING){return;}
     
     EV << "Starting a new leader election, i am a candidate\n";
     becomeCandidate();
@@ -1208,19 +1208,14 @@ void Server::becomeCandidate(){
   status = CANDIDATE;
   currentTerm++;
   votedFor = myAddress;
-  // If a membership change is occurring
-  if(configuration != newConfiguration){
-    // If I am in the new configuration
-    if(getIndex(newConfiguration, myAddress) != -1){
-      votesNewConfig = 1;
-    }
-    // If I am in the old configuration
-    if(getIndex(configuration, myAddress) != -1){
+
+  // If the server is in configuration (even if membership change or not)
+  if(getIndex(configuration, myAddress) != -1){
       votes = 1;
-    }
   }
-  else{ // Not membership change
-    votes = 1;
+  // If membership change and the server is in newConfiguration
+  if(configuration != newConfiguration && getIndex(newConfiguration, myAddress) != -1){
+    votesNewConfig = 1;
   }
   scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
 }
@@ -1450,11 +1445,12 @@ void Server::sendRequestVote(){
     if(configuration[i] != myAddress){
 
       RPCs[i].sequenceNumber++;
-      appendEntriesRPC->setSequenceNumber(RPCs[i].sequenceNumber);
-      if (getIndex(newConfiguration, configuration[i]) != -1){
+      // If membership change occurring check if necessary to increment also the seq num un RPCsNewConfig
+      if (configuration != newConfiguration && getIndex(newConfiguration, configuration[i]) != -1){
         RPCsNewConfig[getIndex(newConfiguration, configuration[i])].sequenceNumber++;
       }
-      
+
+      appendEntriesRPC->setSequenceNumber(RPCs[i].sequenceNumber);
       requestVoteRPC->setDestAddress(configuration[i]);
       pk_copy = requestVoteRPC->dup();
       send(pk_copy, "port$o");
@@ -1463,6 +1459,7 @@ void Server::sendRequestVote(){
   // If a membership change is occurring (consider Cold,new)
   if (newConfiguration != configuration){
     for (int i = 0; i < newConfiguration.size(); i++){
+      // If the destination is not myself and if it is not in configuration (to avoid double sending)
       if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1){
         RPCsNewConfig[i].sequenceNumber++;
         appendEntriesRPC->setSequenceNumber(RPCsNewConfig[i].sequenceNumber);
@@ -1596,6 +1593,13 @@ void Server::refreshDisplay() const
 std::ostream& operator<<(std::ostream& os, const vector<log_entry> log){
   for (int i = 0; i < log.size(); i++){
     os << "{index=" << log[i].logIndex << ",term=" << log[i].term << "} "; // no endl!
+  }
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const vector<lastRPC> RPCs){
+  for (int i = 0; i < RPCs.size(); i++){
+    os << "{SN=" << RPCs[i].sequenceNumber << ",Success=" << RPCs[i].success << "} "; // no endl!
   }
   return os;
 }
