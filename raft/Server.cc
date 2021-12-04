@@ -248,6 +248,11 @@ void Server::handleMessage(cMessage *msg)
     return;
   }
   
+  if(iAmCrashed){
+    return;
+  }
+  
+
   if(msg == sendHearthbeat){
     sendHeartbeatToFollower();
     return;
@@ -518,7 +523,7 @@ void Server::handleMessage(cMessage *msg)
         // Check if index of entry to send is in log of LEADER, otherwise mean that we need to send a Snapshot to the follower to update him
         index = checkEntryIndexIsInLog(index);
         if (index == -1){
-          sendSnapshot();
+          sendSnapshot(receiverAddress);
           break;
         }
 
@@ -555,7 +560,7 @@ void Server::handleMessage(cMessage *msg)
         // If nextIndex is not in any log entry ==> LEADER may have delete the entry cause of snapshotting
         if(checkEntryIndexIsInLog(index) == -1){
           // If nextIndex is in snapshot, send snapshot. Else means that FOLLOWER is up to date
-          if(index <= snapshot.lastIncludedIndex) {sendSnapshot();}
+          if(index <= snapshot.lastIncludedIndex) {sendSnapshot(receiverAddress);}
           else{
             // Case of membership change and the address come from an only NEW server which now is up to date
             if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1){
@@ -1508,7 +1513,7 @@ void Server::sendSnapshot(int destAddress){
   installSnapshotRPC = new RPCInstallSnapshotPacket("RPC_INSTALL_SNAPSHOT", RPC_INSTALL_SNAPSHOT);
   installSnapshotRPC->setSrcAddress(myAddress);
   installSnapshotRPC->setDestAddress(destAddress);
-  installSnapshotRPC->setSequenceNumber();
+  //installSnapshotRPC->setSequenceNumber();
   installSnapshotRPC->setTerm(currentTerm);
   installSnapshotRPC->setLeaderId(myAddress);
   installSnapshotRPC->setLastIncludedIndex(snapshot.lastIncludedIndex);
