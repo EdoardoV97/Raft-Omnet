@@ -3,6 +3,7 @@ simple Server
 {
     parameters:
         int maxLogSizeBeforeSnapshot;
+        double errorRateThreshold = default(1.0);
         volatile bool instantieatedAtRunTime = default(false);
         volatile double hearthBeatTime @unit(s);
         volatile double lowElectionTimeout @unit(s);

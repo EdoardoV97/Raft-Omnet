@@ -54,7 +54,7 @@ class Server : public cSimpleModule
     RPCInstallSnapshotResponsePacket *installSnapshotResponseRPC = nullptr;
 
     RPCClientCommandResponsePacket *clientCommandResponseRPC = nullptr;
-    RPCAckPacket *ACK;
+    RPCAckPacket *ACK = nullptr;
 
     // State Machine of the server
     int x = 0;
@@ -106,8 +106,8 @@ class Server : public cSimpleModule
     void takeSnapshot();
     // Return position in log, if entryIndex is found. Otherwise -1
     int checkEntryIndexIsInLog(int entryIndex);
-    void sendSnapshot(int destAddress));
-    void sendSnapshotResponse(int destAddress));
+    void sendSnapshot(int destAddress);
+    void sendSnapshotResponse(int destAddress);
     bool checkValidRPCResponse(int sender, int SN);
     void applySnapshot();
 };
@@ -197,6 +197,7 @@ void Server::handleMessage(cMessage *msg)
     for (int i = 0; i < appendEntryTimers.size() ; i++){
       cancelEvent(appendEntryTimers[i].timeoutEvent);
     }
+    // TODO cancel also the events of snapshotting
     iAmCrashed = true;
     scheduleAt(simTime() + par("reviveTimeout"), reviveTimeoutEvent);
     return;
@@ -247,6 +248,11 @@ void Server::handleMessage(cMessage *msg)
     return;
   }
   
+  if(iAmCrashed){
+    return;
+  }
+  
+
   if(msg == sendHearthbeat){
     sendHeartbeatToFollower();
     return;
@@ -312,6 +318,11 @@ void Server::handleMessage(cMessage *msg)
   }
     
   RPCPacket *pkGeneric = check_and_cast<RPCPacket *>(msg);
+
+  // Simulate packet dropping on the receiver
+  if(dblrand() >= par("errorRateThreshold").doubleValue()){
+    return;
+  }
 
   updateTerm(pkGeneric);
 
@@ -540,7 +551,7 @@ void Server::handleMessage(cMessage *msg)
         // Check if index of entry to send is in log of LEADER, otherwise mean that we need to send a Snapshot to the follower to update him
         index = checkEntryIndexIsInLog(index);
         if (index == -1){
-          sendSnapshot();
+          sendSnapshot(receiverAddress);
           break;
         }
 
@@ -577,7 +588,7 @@ void Server::handleMessage(cMessage *msg)
         // If nextIndex is not in any log entry ==> LEADER may have delete the entry cause of snapshotting
         if(checkEntryIndexIsInLog(index) == -1){
           // If nextIndex is in snapshot, send snapshot. Else means that FOLLOWER is up to date
-          if(index <= snapshot.lastIncludedIndex) {sendSnapshot();}
+          if(index <= snapshot.lastIncludedIndex) {sendSnapshot(receiverAddress);}
           else{
             // Case of membership change and the address come from an only NEW server which now is up to date
             if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1){
@@ -1530,7 +1541,7 @@ void Server::sendSnapshot(int destAddress){
   installSnapshotRPC = new RPCInstallSnapshotPacket("RPC_INSTALL_SNAPSHOT", RPC_INSTALL_SNAPSHOT);
   installSnapshotRPC->setSrcAddress(myAddress);
   installSnapshotRPC->setDestAddress(destAddress);
-  installSnapshotRPC->setSequenceNumber();
+  //installSnapshotRPC->setSequenceNumber();
   installSnapshotRPC->setTerm(currentTerm);
   installSnapshotRPC->setLeaderId(myAddress);
   installSnapshotRPC->setLastIncludedIndex(snapshot.lastIncludedIndex);
