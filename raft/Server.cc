@@ -160,6 +160,8 @@ void Server::initialize()
   WATCH(log);
   WATCH(RPCs);
   WATCH(votes);
+  WATCH(withAck);
+  WATCH_VECTOR(pendingReadClients);
 
   // Initialize the initial configuration
   initializeConfiguration();
@@ -629,7 +631,7 @@ void Server::handleMessage(cMessage *msg)
         }
 
         // commitIndex update
-        for (int newCommitIndex = commitIndex + 1; !log.empty() && newCommitIndex < log.back().logIndex; newCommitIndex++){
+        for (int newCommitIndex = commitIndex + 1; !log.empty() && newCommitIndex <= log.back().logIndex; newCommitIndex++){
           if(majority(newCommitIndex) == true && log[newCommitIndex].term == currentTerm){
             commitIndex = newCommitIndex;
           }
@@ -761,7 +763,7 @@ void Server::handleMessage(cMessage *msg)
           }
         }    
       }
-      if (ret = true){break;} // exit from the switch
+      if(ret){break;} // exit from the switch
       
       // Keep track of eventual new clients
       if(getClientIndex(pk->getSrcAddress()) == -1){
@@ -817,7 +819,6 @@ void Server::handleMessage(cMessage *msg)
       else{ // READ case
         if(pendingReadClients.empty() == true){
           pendingReadClients.push_back(pk->getSrcAddress());
-          
           if(log[commitIndex].term == currentTerm){ // If already committed an entry in this term (e.g., at least the initial no_op already committed), an alternative is to check if the index of the last no_op in the log is <= commitIndex (and it's term == currentTerm)
             startReadOnlyLeaderCheck();
           }
@@ -841,6 +842,7 @@ void Server::handleMessage(cMessage *msg)
       clientCommandResponseRPC->setLastKnownLeader(leaderAddress); //the client will check if it is -1; thus no Leader because startup of the cluster
       clientCommandResponseRPC->setSrcAddress(myAddress);
       clientCommandResponseRPC->setDestAddress(pk->getSrcAddress());
+      clientCommandResponseRPC->setSequenceNumber(pk->getSequenceNumber());
       send(clientCommandResponseRPC, "port$o"); 
     }
   }
@@ -1377,7 +1379,7 @@ void Server::startReadOnlyLeaderCheck(){
   cancelEvent(sendHearthbeat);
   countingFeedback = true;
   withAck = true;
-  heartbeatSeqNum++;
+  //heartbeatSeqNum++;
   acks++;
   if(configuration!=newConfiguration && (getIndex(newConfiguration, myAddress)!=-1)){
     acksNewConf++;
