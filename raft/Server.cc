@@ -1258,12 +1258,19 @@ void Server::becomeLeader(){
   matchIndex.resize(configuration.size(), 0);
   RPCs.clear();
   RPCs.resize(configuration.size());
+  for (int i = 0; i < RPCs.size(); i++){
+    RPCs[i].success = true; // To avoid waiting for other request vote response (useless if now i am leader), mark them as finished
+  }
+  
   // If i become leader in a membership change phase
   if(configuration != newConfiguration){
     nextIndexNewConfig.resize(newConfiguration.size(), log.back().logIndex + 1);
     matchIndexNewConfig.resize(newConfiguration.size(), 0);
     RPCsNewConfig.clear();
-    RPCsNewConfig.resize(newConfiguration.size()); 
+    RPCsNewConfig.resize(newConfiguration.size());
+    for (int i = 0; i < RPCsNewConfig.size(); i++){
+      RPCsNewConfig[i].success = true; // To avoid waiting for other request vote response (useless if now i am leader), mark them as finished
+    }
   }
 
   // If snapshotFile is NOT empty
