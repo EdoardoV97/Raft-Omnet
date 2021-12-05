@@ -963,10 +963,12 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
 
         // Increment sequence number
         RPCs[i].sequenceNumber++;
+        RPCs[i].success = false;
         appendEntriesRPC->setSequenceNumber(RPCs[i].sequenceNumber);
         // Also in RPCsNewConfig if the follower is also in newConfiguration
         if(configuration != newConfiguration && getIndex(newConfiguration, configuration[i]) != -1){
           RPCsNewConfig[getIndex(newConfiguration, configuration[i])].sequenceNumber++;
+          RPCsNewConfig[getIndex(newConfiguration, configuration[i])].success = false;
         }
         
 
@@ -1002,6 +1004,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
 
         // Increment sequence number
         RPCsNewConfig[i].sequenceNumber++;
+        RPCsNewConfig[i].success = false;
         appendEntriesRPC->setSequenceNumber(RPCsNewConfig[i].sequenceNumber);
 
         EV << "New Entry: Index=" << newEntry.logIndex
@@ -1035,10 +1038,12 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
 
   if(getIndex(configuration, destAddress) != -1){
     RPCs[getIndex(configuration, destAddress)].sequenceNumber++;
+    RPCs[getIndex(configuration, destAddress)].success = false;
     appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, destAddress)].sequenceNumber);
   }
   if(configuration != newConfiguration && getIndex(newConfiguration, destAddress) != -1){
     RPCsNewConfig[getIndex(newConfiguration, destAddress)].sequenceNumber++;
+    RPCsNewConfig[getIndex(newConfiguration, destAddress)].success = false;
     appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, destAddress)].sequenceNumber);
   }
 
@@ -1474,9 +1479,11 @@ void Server::sendRequestVote(){
     if(configuration[i] != myAddress){
 
       RPCs[i].sequenceNumber++;
+      RPCs[i].success = false;
       // If membership change occurring check if necessary to increment also the seq num un RPCsNewConfig
       if (configuration != newConfiguration && getIndex(newConfiguration, configuration[i]) != -1){
         RPCsNewConfig[getIndex(newConfiguration, configuration[i])].sequenceNumber++;
+        RPCsNewConfig[getIndex(newConfiguration, configuration[i])].success = false;
       }
 
       requestVoteRPC->setSequenceNumber(RPCs[i].sequenceNumber);
@@ -1491,6 +1498,7 @@ void Server::sendRequestVote(){
       // If the destination is not myself and if it is not in configuration (to avoid double sending)
       if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1){
         RPCsNewConfig[i].sequenceNumber++;
+        RPCsNewConfig[i].success = false;
         requestVoteRPC->setSequenceNumber(RPCsNewConfig[i].sequenceNumber);
         requestVoteRPC->setDestAddress(newConfiguration[i]);
         pk_copy = requestVoteRPC->dup();
