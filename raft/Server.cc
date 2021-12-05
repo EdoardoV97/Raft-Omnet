@@ -1478,7 +1478,7 @@ void Server::sendRequestVote(){
         RPCsNewConfig[getIndex(newConfiguration, configuration[i])].sequenceNumber++;
       }
 
-      appendEntriesRPC->setSequenceNumber(RPCs[i].sequenceNumber);
+      requestVoteRPC->setSequenceNumber(RPCs[i].sequenceNumber);
       requestVoteRPC->setDestAddress(configuration[i]);
       pk_copy = requestVoteRPC->dup();
       send(pk_copy, "port$o");
@@ -1490,7 +1490,7 @@ void Server::sendRequestVote(){
       // If the destination is not myself and if it is not in configuration (to avoid double sending)
       if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1){
         RPCsNewConfig[i].sequenceNumber++;
-        appendEntriesRPC->setSequenceNumber(RPCsNewConfig[i].sequenceNumber);
+        requestVoteRPC->setSequenceNumber(RPCsNewConfig[i].sequenceNumber);
         requestVoteRPC->setDestAddress(newConfiguration[i]);
         pk_copy = requestVoteRPC->dup();
         send(pk_copy, "port$o");
