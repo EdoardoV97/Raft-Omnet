@@ -159,6 +159,7 @@ void Server::initialize()
   WATCH(newServersCanVote);
   WATCH(log);
   WATCH(RPCs);
+  WATCH(votes);
 
   // Initialize the initial configuration
   initializeConfiguration();
@@ -698,8 +699,8 @@ void Server::handleMessage(cMessage *msg)
     //If i am still candidate
     if(status == CANDIDATE){
       // Check if it is a valid RPC response (the one expected and if it was not already received)
-      if(!checkValidRPCResponse(receiverAddress, pk->getSequenceNumber())){break;}
-      
+      if(!checkValidRPCResponse(sender, pk->getSequenceNumber())){break;}
+      bubble("Vote received");
       // If the vote is granted
       if (pk->getVoteGranted() == true){
 
@@ -924,18 +925,11 @@ bool Server::checkValidRPCResponse(int sender, int SN){
     RPCs[getIndex(configuration, sender)].success = true;
     result = true;
   }
-  else{
-    result= false;
-  }
   // Check if server is one of newConfiguration if a membership change is occurring and the sequence numbers matches and not yet received (Note: if a server i both in "configuration" and "newConfiguration", it will pass this "if" and the one above exactly with same behaviour beacuse RPCs and RPCsNewConfig for him will be equals)
   if(configuration != newConfiguration && getIndex(newConfiguration, sender) != -1 && RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == SN && RPCsNewConfig[getIndex(newConfiguration, sender)].success == false){
     RPCsNewConfig[getIndex(newConfiguration, sender)].success = true;
     result = true;
   }
-  else{
-    result = false;
-  }
-
   return result;
 }
 
