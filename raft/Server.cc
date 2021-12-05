@@ -35,7 +35,6 @@ class Server : public cSimpleModule
     int acks = 0; // This is the number of acks (if membership change: acks from configuration)
     int acksNewConf = 0; // This is the number of akcs of the newConfiguration in case of membership change occurring
     bool countingFeedback = false;
-    bool withAck = false;
     int heartbeatSeqNum = 0; // This is to allow acks for heartbeat for read-only operations
     bool waitingNoOp = false;
     vector<int> pendingReadClients;
@@ -159,8 +158,8 @@ void Server::initialize()
   WATCH(newServersCanVote);
   WATCH(log);
   WATCH(RPCs);
+  WATCH(RPCsNewConfig);
   WATCH(votes);
-  WATCH(withAck);
   WATCH_VECTOR(pendingReadClients);
 
   // Initialize the initial configuration
@@ -226,7 +225,6 @@ void Server::handleMessage(cMessage *msg)
     acks = 0; 
     acksNewConf = 0;
     countingFeedback = false;
-    withAck = false;
     heartbeatSeqNum = 0;
     waitingNoOp = false;
     pendingReadClients.clear();
@@ -349,7 +347,7 @@ void Server::handleMessage(cMessage *msg)
       if(!log.empty()){
         // Check that prevLogIndex is not smaller than Index of first entry in the log. Else means that we need to check the snapshot
         index = checkEntryIndexIsInLog(pk->getPrevLogIndex());
-        if (index != -1){
+        if (index != -1 || index < pk->getPrevLogIndex()){
           if(log[index].term != pk->getPrevLogTerm()){
             partialEval = true;
           }
@@ -446,17 +444,16 @@ void Server::handleMessage(cMessage *msg)
             cancelEvent(electionTimeoutEvent);
             leaderAddress = pk->getLeaderId();
             believeCurrentLeaderExists = true;
-            // If leaderCommit > commitIndex, set commitIndex = min (leaderCommit, index of last new entry).
+            // If leaderCommit > commitIndex, set commitIndex = min (leaderCommit, index of last new entry = which here is not meaningful, thus use the last entry in the log).
             if(pk->getLeaderCommit() > commitIndex){
-              if(pk->getLeaderCommit() < pk->getEntry().logIndex){
+              if(pk->getLeaderCommit() < log.back().logIndex){
                 commitIndex = pk->getLeaderCommit();
               } else{
-                commitIndex = pk->getEntry().logIndex;
+                commitIndex = log.back().logIndex;
               }
             }
-            if(pk->getWithAck() == true){
-              sendAck(pk->getSrcAddress(), pk->getSequenceNumber());
-            }
+            sendAck(pk->getSrcAddress(), pk->getSequenceNumber());
+            
             latestClientResponses.assign(pk->getEntry().clientsData.begin(), pk->getEntry().clientsData.end());
             scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
             scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
@@ -465,7 +462,7 @@ void Server::handleMessage(cMessage *msg)
     }
 
     // Apply all entries through committ index
-    for(int i=lastApplied ; i < commitIndex; i++){
+    for(int i=lastApplied; i < commitIndex && i < log.back().logIndex; i++){
       lastApplied++;
       applyCommand(log[lastApplied]);
     }
@@ -792,6 +789,9 @@ void Server::handleMessage(cMessage *msg)
               RPCsNewConfig[i].success = RPCs[i].success;
             }
           }
+          for (int i = 0; i < RPCsNewConfig.size(); i++){
+            RPCsNewConfig[i].success = true; // To allow the first appendNewEntry to proceed like expected
+          } 
           // Start bringing up to date NEW (only) servers
           newServersCanVote = false;
           log_entry newEntry;
@@ -854,7 +854,7 @@ void Server::handleMessage(cMessage *msg)
 
     if(status == LEADER){
       // Check if it is a valid RPC response (the one expected, and not already received)
-      if(!checkValidRPCResponse(sender, pk->getSequenceNumber())){break;}
+      if(!checkValidRPCResponse(sender, pk->getSequenceNumber())){ break;}
       
       if(countingFeedback == true){
         // If the sender is in configuration
@@ -1356,6 +1356,7 @@ void Server::sendAck(int destAddress, int seqNum){
   ACK->setSequenceNumber(seqNum);
   ACK->setSrcAddress(myAddress);
   ACK->setDestAddress(destAddress);
+  ACK->setDisplayString("b=7,7,oval,black,black,1");
   send(ACK, "port$o"); 
 }
 
@@ -1378,8 +1379,6 @@ void Server::sendResponseToClient(int type, int clientAddress){
 void Server::startReadOnlyLeaderCheck(){
   cancelEvent(sendHearthbeat);
   countingFeedback = true;
-  withAck = true;
-  //heartbeatSeqNum++;
   acks++;
   if(configuration!=newConfiguration && (getIndex(newConfiguration, myAddress)!=-1)){
     acksNewConf++;
@@ -1415,7 +1414,7 @@ void Server::sendHeartbeatToFollower(){
   //EV << "Sending hearthbeat to followers\n";
   bubble("Sending heartbeat");
   for (int i = 0; i < configuration.size(); i++){
-    if(configuration[i] != myAddress){
+    if(configuration[i] != myAddress && RPCs[i].success == true){
       log_entry emptyEntry;
       emptyEntry.term = -1; //convention to explicit heartbeat
     
@@ -1426,12 +1425,13 @@ void Server::sendHeartbeatToFollower(){
       appendEntriesRPC->setLeaderCommit(commitIndex);
       appendEntriesRPC->setSrcAddress(myAddress);
       appendEntriesRPC->setDestAddress(configuration[i]);
-      appendEntriesRPC->setWithAck(withAck);
       
       RPCs[i].sequenceNumber++;
+      RPCs[i].success = false;
       appendEntriesRPC->setSequenceNumber(RPCs[i].sequenceNumber);
       if (newConfiguration != configuration && getIndex(newConfiguration, configuration[i]) != -1){
         RPCsNewConfig[getIndex(newConfiguration, configuration[i])].sequenceNumber++;
+        RPCsNewConfig[getIndex(newConfiguration, configuration[i])].success = false;
       }
 
       appendEntriesRPC->setDisplayString("b=7,7,oval,blue,black,1");
@@ -1441,7 +1441,7 @@ void Server::sendHeartbeatToFollower(){
   // If a membership change is occurring (consider Cold,new)
   if (newConfiguration != configuration){
     for (int i = 0; i < newConfiguration.size(); i++){
-      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1){
+      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1 && RPCsNewConfig[i].success == true){
         log_entry emptyEntry;
         emptyEntry.term = -1; //convention to explicit heartbeat 
       
@@ -1452,9 +1452,9 @@ void Server::sendHeartbeatToFollower(){
         appendEntriesRPC->setLeaderCommit(commitIndex);
         appendEntriesRPC->setSrcAddress(myAddress);
         appendEntriesRPC->setDestAddress(newConfiguration[i]);
-        appendEntriesRPC->setWithAck(withAck);
         
         RPCsNewConfig[i].sequenceNumber++;
+        RPCsNewConfig[i].success = false;
         appendEntriesRPC->setSequenceNumber(RPCsNewConfig[i].sequenceNumber);
         
         appendEntriesRPC->setDisplayString("b=7,7,oval,blue,black,1");
@@ -1462,7 +1462,6 @@ void Server::sendHeartbeatToFollower(){
       }
     }
   }
-  withAck = false;
   scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
   return;
 }

@@ -50,7 +50,6 @@ packet RPCAppendEntriesPacket extends RPCPacket
     int prevLogTerm = 0;                // term of prevLogIndex entry
     log_entry entry;                    // log entries to store (empty for heartbeat);
     int leaderCommit;                   // leader’s commitIndex
-    bool withAck;
 };
 
 
