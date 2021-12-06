@@ -161,6 +161,7 @@ void Server::initialize()
   WATCH(RPCsNewConfig);
   WATCH(votes);
   WATCH_VECTOR(pendingReadClients);
+  WATCH(appendEntryTimers);
 
   // Initialize the initial configuration
   initializeConfiguration();
@@ -251,6 +252,7 @@ void Server::handleMessage(cMessage *msg)
   }
   
   if(iAmCrashed){
+    delete(msg);
     return;
   }
   
@@ -293,21 +295,13 @@ void Server::handleMessage(cMessage *msg)
       appendEntriesRPC->setSrcAddress(myAddress);
       appendEntriesRPC->setDestAddress(appendEntryTimers[i].destination);
       
-      // Increment the latest sequence number associated to the destination and send.
-      if (configuration != newConfiguration)
-      {
-        if (getIndex(configuration, appendEntryTimers[i].destination) != -1){
-          //RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
-          appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber);
-        }
-        if (getIndex(newConfiguration, appendEntryTimers[i].destination) != -1){
-          //RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber++;
-          appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber);
-        }
-      }
-      else{
+      if(getIndex(configuration, appendEntryTimers[i].destination) != -1){
         //RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber++;
         appendEntriesRPC->setSequenceNumber(RPCs[getIndex(configuration, appendEntryTimers[i].destination)].sequenceNumber);
+      }
+      if(configuration != newConfiguration && getIndex(newConfiguration, appendEntryTimers[i].destination) != -1){
+        //RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber++;
+        appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber);
       }
       send(appendEntriesRPC, "port$o");
       
@@ -322,6 +316,7 @@ void Server::handleMessage(cMessage *msg)
 
   // Simulate packet dropping on the receiver
   if(dblrand() >= par("errorRateThreshold").doubleValue()){
+    delete(pkGeneric);
     return;
   }
 
@@ -1638,6 +1633,13 @@ std::ostream& operator<<(std::ostream& os, const vector<log_entry> log){
 std::ostream& operator<<(std::ostream& os, const vector<lastRPC> RPCs){
   for (int i = 0; i < RPCs.size(); i++){
     os << "{SN=" << RPCs[i].sequenceNumber << ",Success=" << RPCs[i].success << "} "; // no endl!
+  }
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const vector<append_entry_timer> appendEntryTimers){
+  for (int i = 0; i < appendEntryTimers.size(); i++){
+    os << "{D=" << appendEntryTimers[i].destination << ",Event=" << appendEntryTimers[i].timeoutEvent << "} "; // no endl!
   }
   return os;
 }
