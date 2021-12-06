@@ -108,7 +108,6 @@ class Server : public cSimpleModule
     void sendSnapshot(int destAddress);
     void sendSnapshotResponse(int destAddress);
     bool checkValidRPCResponse(int sender, int SN);
-    bool checkValidRPCHeartbeatResponse(int sender, int SN);
     void applySnapshot();
 };
 
@@ -850,7 +849,7 @@ void Server::handleMessage(cMessage *msg)
 
     if(status == LEADER){
       // Check if it is a valid RPC response (the one expected, and not already received)
-      if(!checkValidRPCHeartbeatResponse(sender, pk->getSequenceNumber())){ break;}
+      if(!checkValidRPCResponse(sender, pk->getSequenceNumber())){ break;}
       
       if(countingFeedback == true){
         // If the sender is in configuration
@@ -925,22 +924,6 @@ bool Server::checkValidRPCResponse(int sender, int SN){
   }
   // Check if server is one of newConfiguration if a membership change is occurring and the sequence numbers matches and not yet received (Note: if a server i both in "configuration" and "newConfiguration", it will pass this "if" and the one above exactly with same behaviour beacuse RPCs and RPCsNewConfig for him will be equals)
   if(configuration != newConfiguration && getIndex(newConfiguration, sender) != -1 && RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == SN && RPCsNewConfig[getIndex(newConfiguration, sender)].success == false){
-    RPCsNewConfig[getIndex(newConfiguration, sender)].success = true;
-    result = true;
-  }
-  return result;
-}
-
-bool Server::checkValidRPCHeartbeatResponse(int sender, int SN){
-  bool result = false;
-
-  // Check if server is one of configuration (even if membership change or not) and the sequence numbers matches (for sure not yet received because every heartbeat has a new sequence number and is never re-send)
-  if(getIndex(configuration, sender) != -1 && RPCs[getIndex(configuration, sender)].sequenceNumber == SN){
-    RPCs[getIndex(configuration, sender)].success = true;
-    result = true;
-  }
-  // Check if server is one of newConfiguration if a membership change is occurring and the sequence numbers matches (for sure not yet received because every heartbeat has a new sequence number and is never re-send) (Note: if a server i both in "configuration" and "newConfiguration", it will pass this "if" and the one above exactly with same behaviour beacuse RPCs and RPCsNewConfig for him will be equals)
-  if(configuration != newConfiguration && getIndex(newConfiguration, sender) != -1 && RPCsNewConfig[getIndex(newConfiguration, sender)].sequenceNumber == SN ){
     RPCsNewConfig[getIndex(newConfiguration, sender)].success = true;
     result = true;
   }
@@ -1426,7 +1409,8 @@ void Server::sendHeartbeatToFollower(){
   //EV << "Sending hearthbeat to followers\n";
   bubble("Sending heartbeat");
   for (int i = 0; i < configuration.size(); i++){
-    if(configuration[i] != myAddress && RPCs[i].success == true){
+    // If it is not myAddress, and the previous RPC is completed or it was an heartbeat RPC.
+    if(configuration[i] != myAddress && (RPCs[i].success == true || RPCs[i].isHeartbeat == true)){
       log_entry emptyEntry;
       emptyEntry.term = -1; //convention to explicit heartbeat
     
@@ -1439,9 +1423,13 @@ void Server::sendHeartbeatToFollower(){
       appendEntriesRPC->setDestAddress(configuration[i]);
       
       RPCs[i].sequenceNumber++;
+      RPCs[i].success = false;
+      RPCs[i].isHeartbeat = true;
       appendEntriesRPC->setSequenceNumber(RPCs[i].sequenceNumber);
       if (newConfiguration != configuration && getIndex(newConfiguration, configuration[i]) != -1){
         RPCsNewConfig[getIndex(newConfiguration, configuration[i])].sequenceNumber++;
+        RPCsNewConfig[getIndex(newConfiguration, configuration[i])].success = false;
+        RPCsNewConfig[getIndex(newConfiguration, configuration[i])].isHeartbeat = true;
       }
 
       appendEntriesRPC->setDisplayString("b=7,7,oval,blue,black,1");
@@ -1451,7 +1439,7 @@ void Server::sendHeartbeatToFollower(){
   // If a membership change is occurring (consider Cold,new)
   if (newConfiguration != configuration){
     for (int i = 0; i < newConfiguration.size(); i++){
-      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1 && RPCsNewConfig[i].success == true){
+      if(newConfiguration[i] != myAddress && getIndex(configuration, newConfiguration[i]) == -1 && (RPCsNewConfig[i].success == true || RPCsNewConfig[i].isHeartbeat == true)){
         log_entry emptyEntry;
         emptyEntry.term = -1; //convention to explicit heartbeat 
       
@@ -1464,6 +1452,8 @@ void Server::sendHeartbeatToFollower(){
         appendEntriesRPC->setDestAddress(newConfiguration[i]);
         
         RPCsNewConfig[i].sequenceNumber++;
+        RPCsNewConfig[i].success = false;
+        RPCsNewConfig[i].isHeartbeat = true;
         appendEntriesRPC->setSequenceNumber(RPCsNewConfig[i].sequenceNumber);
         
         appendEntriesRPC->setDisplayString("b=7,7,oval,blue,black,1");

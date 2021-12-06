@@ -20,6 +20,7 @@ struct lastRPC
 {
     bool success = false;
     int sequenceNumber = -1;
+    bool isHeartbeat = false;
 };
 
 
