@@ -1167,6 +1167,8 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int index){
   // Create the associated timer to eventually resend the message if no response come back.
   append_entry_timer newTimer;
   newTimer.destination = destAddress;
+  newTimer.prevLogIndex = newEntry.logIndex - 1;
+  newTimer.prevLogTerm = log[newEntry.logIndex - 1].term;
   newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
   newTimer.entry = newEntry;
   newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
