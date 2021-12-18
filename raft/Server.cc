@@ -1061,7 +1061,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
             if(!timerAlreadyPresent){
               appendEntryTimers.push_back(newTimer);
               // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
-              scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent); //TODO hearthBeatTime -> to avoid overlapping with a read-only leader check occurring
+              scheduleAt(simTime() + par("hearthBeatTime"), newTimer.timeoutEvent); // hearthBeatTime -> to avoid overlapping with a read-only leader check occurring
             }
           }
         }
@@ -1122,7 +1122,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
             if(!timerAlreadyPresent){
               appendEntryTimers.push_back(newTimer);
               // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
-              scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent); //TODO hearthBeatTime -> to avoid overlapping with a read-only leader check occurring
+              scheduleAt(simTime() + par("hearthBeatTime"), newTimer.timeoutEvent); // hearthBeatTime -> to avoid overlapping with a read-only leader check occurring
             }
           }
         }
