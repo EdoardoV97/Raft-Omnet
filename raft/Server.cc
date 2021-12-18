@@ -460,6 +460,7 @@ void Server::handleMessage(cMessage *msg)
             scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
             scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
           }
+          else{sendAck(pk->getSrcAddress(), pk->getSequenceNumber());}
         }
     }
 
@@ -563,7 +564,7 @@ void Server::handleMessage(cMessage *msg)
 
       for(int i=0; i < appendEntryTimers.size() ; i++){
         if (receiverAddress == appendEntryTimers[i].destination){
-          cancelEvent(appendEntryTimers[i].timeoutEvent);
+          cancelAndDelete(appendEntryTimers[i].timeoutEvent);
           appendEntryTimers.erase(appendEntryTimers.begin() + i);
           break;
         }
@@ -1050,8 +1051,8 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
             // To check if there is not already an append entry "programmed"
             bool timerAlreadyPresent = false;
             
-            for(int i=0; i < appendEntryTimers.size() ; i++){
-              if (configuration[i] == appendEntryTimers[i].destination){
+            for(int k=0; k < appendEntryTimers.size() ; k++){
+              if (configuration[i] == appendEntryTimers[k].destination){
                 timerAlreadyPresent = true;
                 break;
               }
@@ -1060,7 +1061,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
             if(!timerAlreadyPresent){
               appendEntryTimers.push_back(newTimer);
               // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
-              scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
+              scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent); //TODO hearthBeatTime -> to avoid overlapping with a read-only leader check occurring
             }
           }
         }
@@ -1111,8 +1112,8 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
             // To check if there is not already an append entry "programmed"
             bool timerAlreadyPresent = false;
             
-            for(int i=0; i < appendEntryTimers.size() ; i++){
-              if (newConfiguration[i] == appendEntryTimers[i].destination){
+            for(int k=0; k < appendEntryTimers.size() ; k++){
+              if (newConfiguration[i] == appendEntryTimers[k].destination){
                 timerAlreadyPresent = true;
                 break;
               }
@@ -1121,7 +1122,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
             if(!timerAlreadyPresent){
               appendEntryTimers.push_back(newTimer);
               // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
-              scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
+              scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent); //TODO hearthBeatTime -> to avoid overlapping with a read-only leader check occurring
             }
           }
         }
