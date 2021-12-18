@@ -6,9 +6,9 @@ using namespace omnetpp;
 struct latest_client_response
 {
     int clientAddress;
-    int latestSequenceNumber;
-    int latestReponseToClient;
-    int currentSequenceNumber;
+    int latestSequenceNumber = -1;
+    int latestReponseToClient = -1;
+    int currentSequenceNumber = -1;
 };
 
 struct cluster_configuration
@@ -20,6 +20,7 @@ struct lastRPC
 {
     bool success = false;
     int sequenceNumber = -1;
+    bool isHeartbeat = false;
 };
 
 
