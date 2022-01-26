@@ -413,6 +413,9 @@ void Server::handleMessage(cMessage *msg)
               }
             }
           }
+          else{
+            partialEval = true;
+          }
         }
       }
       // Log is empty, so we are sure snapshot exists
@@ -1917,6 +1920,8 @@ void Server::sendSnapshot(int destAddress){
 
   installSnapshotTimers.push_back(newTimer);
   scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
+
+  send(installSnapshotRPC, "port$o");
 }
 
 void Server::sendSnapshotResponse(int destAddress, int seqNum){
@@ -2019,6 +2024,6 @@ std::ostream& operator<<(std::ostream& os, const vector<install_snapshot_timer> 
 }
 
 std::ostream& operator<<(std::ostream& os, const snapshot_file snap){
-  os << "{lastIndex=" << snap.lastIncludedIndex << ",lastTerm=" << snap.lastIncludedTerm << "} "; // no endl!
+  os << "{lastIndex=" << snap.lastIncludedIndex << ",lastTerm=" << snap.lastIncludedTerm << ",value=" << snap.value << "} "; // no endl!
   return os;
 }
