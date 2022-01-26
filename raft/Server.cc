@@ -731,7 +731,7 @@ void Server::handleMessage(cMessage *msg)
         }
 
         // commitIndex update
-        for (int newCommitIndex = commitIndex + 1; !log.empty() && newCommitIndex < log.back().logIndex; newCommitIndex++){
+        for (int newCommitIndex = commitIndex + 1; !log.empty() && newCommitIndex <= log.back().logIndex; newCommitIndex++){
           index = getEntryIndexPositionInLog(newCommitIndex);
           if(majority(newCommitIndex) == true && log[index].term == currentTerm){
             commitIndex = newCommitIndex;
@@ -1022,7 +1022,7 @@ void Server::handleMessage(cMessage *msg)
   {
     RPCInstallSnapshotResponsePacket *pk = check_and_cast<RPCInstallSnapshotResponsePacket *>(pkGeneric);
     if(status == LEADER){
-      int sender = pk->getSrcAddress();
+      int receiverAddress = pk->getSrcAddress();
       if(!checkValidRPCResponse(receiverAddress, pk->getSequenceNumber())){break;}
       
       for(int i=0; i < installSnapshotTimers.size() ; i++){
@@ -1032,6 +1032,67 @@ void Server::handleMessage(cMessage *msg)
           break;
         }
       }
+
+      /* // Check if in the meantime we have accumulated some new entries to send
+      int position;
+      int index;
+
+      if(getIndex(configuration, receiverAddress) != -1){
+        position = getIndex(configuration, receiverAddress);
+        // Update matchIndex and nextIndex
+        matchIndex[position] = nextIndex[position];
+        index = ++nextIndex[position];
+      }
+
+      // Configuration change and follower also in new config
+      if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1){
+        position = getIndex(newConfiguration, receiverAddress);  
+        // Update matchIndex and nextIndex
+        matchIndexNewConfig[position] = nextIndexNewConfig[position];
+        index = ++nextIndexNewConfig[position];
+      }
+
+      // If nextIndex is not in any log entry ==> LEADER may have delete the entry cause of snapshotting
+      if(getEntryIndexPositionInLog(index) == -1){
+        // If nextIndex is in snapshot, send snapshot. Else means that FOLLOWER is up to date
+        if(index <= snapshot.lastIncludedIndex) {sendSnapshot(receiverAddress);}
+        else{
+          // Case of membership change and the address come from an only NEW server which now is up to date
+          if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1){
+            if(checkNewServersAreUpToDate()){ // Now trigger the Cold,new append
+              bubble("Creating C_old,new");
+              log_entry newEntry;
+              newEntry.term = currentTerm;
+              newEntry.logIndex = log.back().logIndex + 1;
+              newEntry.clientAddress = adminAddress;
+              newEntry.var = 'C';
+              newEntry.cOld.assign(configuration.begin(), configuration.end());
+              newEntry.cNew.assign(newConfiguration.begin(), newConfiguration.end());
+              newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
+              log.push_back(newEntry);
+              matchIndex[getIndex(configuration, myAddress)]++;
+              if (getIndex(newConfiguration, myAddress) != -1){
+                matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
+              }
+              newServersCanVote = true;
+              cancelEvent(sendHearthbeat);
+              appendNewEntry(newEntry, false);
+              scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); 
+            }
+          }
+        }
+      }
+      else{
+        index = getEntryIndexPositionInLog(index);
+        log_entry newEntry;
+        newEntry = log[index];
+        newEntry.clientsData.assign(log[index].clientsData.begin(), log[index].clientsData.end());
+        if(newEntry.var == 'C'){  
+          newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
+          newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
+        }
+        appendNewEntryTo(newEntry, receiverAddress, position);
+      } */
     }
   }
   default:
