@@ -656,8 +656,10 @@ void Server::handleMessage(cMessage *msg)
 
         // Check if index of entry to send is in log of LEADER, otherwise mean that we need to send a Snapshot to the follower to update him
         index = getEntryIndexPositionInLog(index);
-        if (index == -1){
-          sendSnapshot(receiverAddress);
+        if (index == -1 ){
+          if(snapshot.value != -1){
+            sendSnapshot(receiverAddress);
+          }
           break;
         }
 
@@ -694,7 +696,7 @@ void Server::handleMessage(cMessage *msg)
         // If nextIndex is not in any log entry ==> LEADER may have delete the entry cause of snapshotting
         if(getEntryIndexPositionInLog(index) == -1){
           // If nextIndex is in snapshot, send snapshot. Else means that FOLLOWER is up to date
-          if(index <= snapshot.lastIncludedIndex) {sendSnapshot(receiverAddress);}
+          if(snapshot.value != -1 && index <= snapshot.lastIncludedIndex) {sendSnapshot(receiverAddress);}
           else{
             // Case of membership change and the address come from an only NEW server which now is up to date
             if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1){
@@ -1880,6 +1882,7 @@ int Server::getEntryIndexPositionInLog(int entryIndex){
 }
 
 void Server::sendSnapshot(int destAddress){
+  EV << "I am sending a snapshot\n"; 
   snapshot_file temp = snapshot;
   temp.cOld.assign(snapshot.cOld.begin(), snapshot.cOld.end());
   temp.cNew.assign(snapshot.cNew.begin(), snapshot.cNew.end());
@@ -1921,7 +1924,6 @@ void Server::sendSnapshot(int destAddress){
   installSnapshotTimers.push_back(newTimer);
   scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
 
-  send(installSnapshotRPC, "port$o");
 }
 
 void Server::sendSnapshotResponse(int destAddress, int seqNum){

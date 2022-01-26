@@ -56,8 +56,8 @@ enum serverState
 
 struct snapshot_file 
 {
-    int lastIncludedIndex;
-    int lastIncludedTerm;
+    int lastIncludedIndex = -1;
+    int lastIncludedTerm = -1;
     // State machine state
     char var;
     int value = -1; // Convention to indicate snapshot file void
