@@ -944,7 +944,10 @@ void Server::handleMessage(cMessage *msg)
         
         cancelEvent(sendHearthbeat);
         appendNewEntry(newEntry, false);
-        scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);      
+        scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
+        
+        // Take snapshot if needed
+        if (log.size() >= (int)par("maxLogSizeBeforeSnapshot")) {takeSnapshot();}      
       }
       else{ // READ case
         if(pendingReadClients.empty() == true){
@@ -1336,13 +1339,26 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int serverInd
   // If NOT membership change occurring OR if it is occurring but the destination is in configuration
   if((configuration == newConfiguration) || (configuration != newConfiguration && getIndex(configuration, destAddress) != -1)){
     index = getEntryIndexPositionInLog(nextIndex[serverIndex]);
-    appendEntriesRPC->setPrevLogIndex(log[index-1].logIndex); // -1 because the previous
-    appendEntriesRPC->setPrevLogTerm(log[index-1].term);
+    // If index == 0 means that we must take from the snapshot the prevLogIndex and prevLogTerm, because the previous entry is not more in the log
+    if(index == 0){
+      appendEntriesRPC->setPrevLogIndex(snapshot.lastIncludedIndex);
+      appendEntriesRPC->setPrevLogTerm(snapshot.lastIncludedTerm); 
+    }
+    else{
+      appendEntriesRPC->setPrevLogIndex(log[index-1].logIndex); // -1 because the previous
+      appendEntriesRPC->setPrevLogTerm(log[index-1].term);
+    }
   }
   else{ // A membership change is occurring and the destination is ONLY in newConfiguration (by exclusion from the IF case above)
     index = getEntryIndexPositionInLog(nextIndexNewConfig[serverIndex]);
-    appendEntriesRPC->setPrevLogIndex(log[index-1].logIndex); // -1 because the previous
-    appendEntriesRPC->setPrevLogTerm(log[index-1].term);
+    if(index == 0){
+      appendEntriesRPC->setPrevLogIndex(snapshot.lastIncludedIndex);
+      appendEntriesRPC->setPrevLogTerm(snapshot.lastIncludedTerm); 
+    }
+    else{
+      appendEntriesRPC->setPrevLogIndex(log[index-1].logIndex); // -1 because the previous
+      appendEntriesRPC->setPrevLogTerm(log[index-1].term);
+    }
   }
 
   // Create the associated timer to eventually resend the message if no response come back.
