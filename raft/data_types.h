@@ -62,8 +62,17 @@ struct snapshot_file
     char var;
     int value = -1; // Convention to indicate snapshot file void
     // Last known config
-    vector<int> configuration;
-    vector<int> newConfiguration;
+    vector<int> cOld;
+    vector<int> cNew;
     // Latest response to Client
     vector<latest_client_response> clientsData;
+};
+
+struct install_snapshot_timer
+{
+    snapshot_file snapshot;
+    int destination;
+    int lastIncludedIndex;
+    int lastIncludedTerm;
+    cMessage *timeoutEvent;
 };

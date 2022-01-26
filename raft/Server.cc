@@ -23,6 +23,7 @@ class Server : public cSimpleModule
     cMessage *crashTimeoutEvent;
     cMessage *reviveTimeoutEvent;
     vector<append_entry_timer> appendEntryTimers;
+    vector<install_snapshot_timer> installSnapshotTimers;
     
     int myAddress;   // This is the server ID
     int receiverAddress; // This is receiver server ID (for utility)
@@ -106,7 +107,7 @@ class Server : public cSimpleModule
     // Return position in log, if entryIndex is found. Otherwise -1
     int getEntryIndexPositionInLog(int entryIndex);
     void sendSnapshot(int destAddress);
-    void sendSnapshotResponse(int destAddress);
+    void sendSnapshotResponse(int destAddress, int seqNum);
     bool checkValidRPCResponse(int sender, int SN);
     bool checkHeartbeatResponse(int sender);
     void applySnapshot();
@@ -123,6 +124,9 @@ Server::~Server()
   cancelAndDelete(minElectionTimeoutEvent);
   for (int i = 0; i < appendEntryTimers.size() ; i++){
     cancelAndDelete(appendEntryTimers[i].timeoutEvent);
+  }
+  for (int i = 0; i < installSnapshotTimers.size() ; i++){
+    cancelAndDelete(installSnapshotTimers[i].timeoutEvent);
   }
   cancelAndDelete(reviveTimeoutEvent);
   cancelAndDelete(crashTimeoutEvent);
@@ -163,6 +167,8 @@ void Server::initialize()
   WATCH(votes);
   WATCH_VECTOR(pendingReadClients);
   WATCH(appendEntryTimers);
+  WATCH(snapshot);
+  WATCH(installSnapshotTimers);
 
   // Initialize the initial configuration
   initializeConfiguration();
@@ -202,7 +208,9 @@ void Server::handleMessage(cMessage *msg)
     for (int i = 0; i < appendEntryTimers.size() ; i++){
       cancelEvent(appendEntryTimers[i].timeoutEvent);
     }
-    // TODO cancel also the events of snapshotting
+    for (int i = 0; i < installSnapshotTimers.size() ; i++){
+      cancelAndDelete(installSnapshotTimers[i].timeoutEvent);
+    }
     iAmCrashed = true;
     scheduleAt(simTime() + par("reviveTimeout"), reviveTimeoutEvent);
     return;
@@ -319,6 +327,46 @@ void Server::handleMessage(cMessage *msg)
     
   }
     
+  // Retry install snapshot if an installSnapshotTimer is fired 
+  for (int i = 0; i < installSnapshotTimers.size() ; i++){
+    if (msg == installSnapshotTimers[i].timeoutEvent){
+
+      // Re-craft the snapshot
+      snapshot_file newSnapshot = installSnapshotTimers[i].snapshot;
+      newSnapshot.cOld.assign(installSnapshotTimers[i].snapshot.cOld.begin(), installSnapshotTimers[i].snapshot.cOld.end());
+      newSnapshot.cNew.assign(installSnapshotTimers[i].snapshot.cNew.begin(), installSnapshotTimers[i].snapshot.cNew.end());
+      newSnapshot.clientsData.assign(installSnapshotTimers[i].snapshot.clientsData.begin(), installSnapshotTimers[i].snapshot.clientsData.end());
+
+      //Create the message
+      installSnapshotRPC = new RPCInstallSnapshotPacket("RPC_INSTALL_SNAPSHOT", RPC_INSTALL_SNAPSHOT);
+      installSnapshotRPC->setTerm(currentTerm);
+      installSnapshotRPC->setLeaderId(myAddress);
+      installSnapshotRPC->setLastIncludedIndex(installSnapshotTimers[i].lastIncludedIndex); 
+      installSnapshotRPC->setLastIncludedTerm(installSnapshotTimers[i].lastIncludedTerm);
+      installSnapshotRPC->setSnapshot(newSnapshot);
+      installSnapshotRPC->setSrcAddress(myAddress);
+      installSnapshotRPC->setDestAddress(installSnapshotTimers[i].destination);
+      
+      if(getIndex(configuration, installSnapshotTimers[i].destination) != -1){
+        RPCs[getIndex(configuration, installSnapshotTimers[i].destination)].sequenceNumber++;
+        RPCs[getIndex(configuration, installSnapshotTimers[i].destination)].success = false;
+        RPCs[getIndex(configuration, installSnapshotTimers[i].destination)].isHeartbeat = false; 
+        installSnapshotRPC->setSequenceNumber(RPCs[getIndex(configuration, installSnapshotTimers[i].destination)].sequenceNumber);
+      }
+      if(configuration != newConfiguration && getIndex(newConfiguration, installSnapshotTimers[i].destination) != -1){
+        RPCsNewConfig[getIndex(newConfiguration, installSnapshotTimers[i].destination)].sequenceNumber++;
+        RPCs[getIndex(configuration, installSnapshotTimers[i].destination)].success = false;
+        RPCsNewConfig[getIndex(newConfiguration, installSnapshotTimers[i].destination)].isHeartbeat = false;
+        installSnapshotRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, installSnapshotTimers[i].destination)].sequenceNumber);
+      }
+      send(installSnapshotRPC, "port$o");
+      
+      //Reset timer
+      scheduleAt(simTime() + par("resendTimeout"), installSnapshotTimers[i].timeoutEvent);
+      return;
+    }
+  }
+
   RPCPacket *pkGeneric = check_and_cast<RPCPacket *>(msg);
 
   // Simulate packet dropping on the receiver
@@ -930,10 +978,11 @@ void Server::handleMessage(cMessage *msg)
   {
     RPCInstallSnapshotPacket *pk = check_and_cast<RPCInstallSnapshotPacket *>(pkGeneric);
     receiverAddress = pk->getSrcAddress();
+    int seqNum = pk->getSequenceNumber();
 
     // If term in packet < currentTerm, reply immediately
     if (pk->getTerm() < currentTerm){
-      sendSnapshotResponse(receiverAddress);
+      sendSnapshotResponse(receiverAddress, seqNum);
       break;
     }
 
@@ -951,7 +1000,7 @@ void Server::handleMessage(cMessage *msg)
     if (index != -1){
       if (log[index].term == pk->getLastIncludedTerm()){
         log.erase(log.begin(), log.begin() + index);
-        sendSnapshotResponse(receiverAddress);
+        sendSnapshotResponse(receiverAddress, seqNum);
         break;
       }
     }
@@ -964,14 +1013,26 @@ void Server::handleMessage(cMessage *msg)
     // 4) If we arrive here, received snapshot has the most up-to-date info.
     //    So, reset state machine using snapshot contents(and load snapshot's cluster configuration, and client's data)
     x = pk->getSnapshot().value;
-    configuration.assign(pk->getSnapshot().configuration.begin(), pk->getSnapshot().configuration.end());
-    newConfiguration.assign(pk->getSnapshot().newConfiguration.begin(), pk->getSnapshot().newConfiguration.end());
+    configuration.assign(pk->getSnapshot().cOld.begin(), pk->getSnapshot().cOld.end());
+    newConfiguration.assign(pk->getSnapshot().cNew.begin(), pk->getSnapshot().cNew.end());
     latestClientResponses.assign(pk->getSnapshot().clientsData.begin(), pk->getSnapshot().clientsData.end());
   }
   break;
   case RPC_INSTALL_SNAPSHOT_RESPONSE:
   {
-    // TODO set success for RPC request associated to sender
+    RPCInstallSnapshotResponsePacket *pk = check_and_cast<RPCInstallSnapshotResponsePacket *>(pkGeneric);
+    if(status == LEADER){
+      int sender = pk->getSrcAddress();
+      if(!checkValidRPCResponse(receiverAddress, pk->getSequenceNumber())){break;}
+      
+      for(int i=0; i < installSnapshotTimers.size() ; i++){
+        if (receiverAddress == installSnapshotTimers[i].destination){
+          cancelAndDelete(installSnapshotTimers[i].timeoutEvent);
+          installSnapshotTimers.erase(installSnapshotTimers.begin() + i);
+          break;
+        }
+      }
+    }
   }
   default:
   break;
@@ -1499,6 +1560,9 @@ void Server::becomeFollower(RPCPacket *pkGeneric){
   for (int i = 0; i < appendEntryTimers.size() ; i++){
     cancelEvent(appendEntryTimers[i].timeoutEvent);
   }
+  for (int i = 0; i < installSnapshotTimers.size() ; i++){
+    cancelEvent(installSnapshotTimers[i].timeoutEvent);
+  }
   if(pkGeneric->getKind() == RPC_APPEND_ENTRIES){
     RPCAppendEntriesPacket *pk = check_and_cast<RPCAppendEntriesPacket *>(pkGeneric);
     leaderAddress = pk->getLeaderId();
@@ -1728,8 +1792,8 @@ void Server::takeSnapshot(){
       // Save state machine state
       snapshot.var = 'x';
       snapshot.value = x;
-      snapshot.configuration.assign(configuration.begin(), configuration.end());
-      snapshot.newConfiguration.assign(newConfiguration.begin(), configuration.end());
+      snapshot.cOld.assign(configuration.begin(), configuration.end());
+      snapshot.cNew.assign(newConfiguration.begin(), newConfiguration.end());
       snapshot.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
 
       // Delete the log till(included) the entry with lastIncludedIndex
@@ -1752,6 +1816,11 @@ int Server::getEntryIndexPositionInLog(int entryIndex){
 }
 
 void Server::sendSnapshot(int destAddress){
+  snapshot_file temp = snapshot;
+  temp.cOld.assign(snapshot.cOld.begin(), snapshot.cOld.end());
+  temp.cNew.assign(snapshot.cNew.begin(), snapshot.cNew.end());
+  temp.clientsData.assign(snapshot.clientsData.begin(), snapshot.clientsData.end());
+
   installSnapshotRPC = new RPCInstallSnapshotPacket("RPC_INSTALL_SNAPSHOT", RPC_INSTALL_SNAPSHOT);
   installSnapshotRPC->setSrcAddress(myAddress);
   installSnapshotRPC->setDestAddress(destAddress);
@@ -1759,27 +1828,42 @@ void Server::sendSnapshot(int destAddress){
   installSnapshotRPC->setLeaderId(myAddress);
   installSnapshotRPC->setLastIncludedIndex(snapshot.lastIncludedIndex);
   installSnapshotRPC->setLastIncludedTerm(snapshot.lastIncludedTerm);
+  installSnapshotRPC->setSnapshot(temp);
 
   // Update Sequence Number of receiver
   if(getIndex(configuration, destAddress) != -1){
     RPCs[getIndex(configuration, destAddress)].sequenceNumber++;
+    RPCs[getIndex(configuration, destAddress)].success = false;
+    RPCs[getIndex(configuration, destAddress)].isHeartbeat = false;
     installSnapshotRPC->setSequenceNumber(RPCs[getIndex(configuration, destAddress)].sequenceNumber);
   }
   if(configuration != newConfiguration && getIndex(newConfiguration, destAddress) != -1){
     RPCsNewConfig[getIndex(newConfiguration, destAddress)].sequenceNumber++;
+    RPCsNewConfig[getIndex(newConfiguration, destAddress)].success = false;
+    RPCsNewConfig[getIndex(newConfiguration, destAddress)].isHeartbeat = false;
     installSnapshotRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, destAddress)].sequenceNumber);
   }
   
-  // TODO: add timers to resend the snapshot if not received?
+  install_snapshot_timer newTimer;
+  newTimer.destination = destAddress;
+  newTimer.lastIncludedIndex = temp.lastIncludedIndex;
+  newTimer.lastIncludedTerm = temp.lastIncludedTerm;
+  newTimer.timeoutEvent = new cMessage("install-snapshot-timeout-event");
+  newTimer.snapshot = temp;
+  newTimer.snapshot.cOld.assign(temp.cOld.begin(), temp.cOld.end());
+  newTimer.snapshot.cNew.assign(temp.cNew.begin(), temp.cNew.end());
+  newTimer.snapshot.clientsData.assign(temp.clientsData.begin(), temp.clientsData.end());
+
+  installSnapshotTimers.push_back(newTimer);
+  scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
 }
 
-void Server::sendSnapshotResponse(int destAddress){
+void Server::sendSnapshotResponse(int destAddress, int seqNum){
   installSnapshotResponseRPC = new RPCInstallSnapshotResponsePacket("RPC_INSTALL_SNAPSHOT_RESPONSE", RPC_INSTALL_SNAPSHOT_RESPONSE);
   installSnapshotResponseRPC->setSrcAddress(myAddress);
   installSnapshotResponseRPC->setDestAddress(destAddress);
   installSnapshotResponseRPC->setTerm(currentTerm);
-  
-  // TODO: add sequence number
+  installSnapshotResponseRPC->setSequenceNumber(seqNum);
 }
 
 void Server::applySnapshot(){
@@ -1803,8 +1887,8 @@ void Server::applySnapshot(){
   latestClientResponses.assign(snapshot.clientsData.begin(), snapshot.clientsData.end());
 
   // Update configurations
-  configuration.assign(snapshot.configuration.begin(), snapshot.configuration.end());
-  newConfiguration.assign(snapshot.newConfiguration.begin(), snapshot.newConfiguration.end());
+  configuration.assign(snapshot.cOld.begin(), snapshot.cOld.end());
+  newConfiguration.assign(snapshot.cNew.begin(), snapshot.cNew.end());
 }
 
 void Server::refreshDisplay() const
@@ -1863,5 +1947,17 @@ std::ostream& operator<<(std::ostream& os, const vector<append_entry_timer> appe
   for (int i = 0; i < appendEntryTimers.size(); i++){
     os << "{D=" << appendEntryTimers[i].destination << ",Event=" << appendEntryTimers[i].timeoutEvent << "} "; // no endl!
   }
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const vector<install_snapshot_timer> installSnapshotTimers){
+  for (int i = 0; i < installSnapshotTimers.size(); i++){
+    os << "{D=" << installSnapshotTimers[i].destination << ",Event=" << installSnapshotTimers[i].timeoutEvent << "} "; // no endl!
+  }
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const snapshot_file snap){
+  os << "{lastIndex=" << snap.lastIncludedIndex << ",lastTerm=" << snap.lastIncludedTerm << "} "; // no endl!
   return os;
 }
