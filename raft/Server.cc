@@ -1848,6 +1848,7 @@ void Server::sendRequestVote(){
 }
 
 void Server::takeSnapshot(){
+  bubble("I am taking a snapshot"); 
   for (int i=0; i<log.size(); i++){
     if(log[i].logIndex == commitIndex){
 
