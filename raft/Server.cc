@@ -318,7 +318,14 @@ void Server::handleMessage(cMessage *msg)
         RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].isHeartbeat = false;
         appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber);
       }
-      send(appendEntriesRPC, "port$o");
+      if(getIndex(configuration, appendEntryTimers[i].destination) != -1 || (configuration != newConfiguration && getIndex(newConfiguration, appendEntryTimers[i].destination) != -1)){
+        send(appendEntriesRPC, "port$o");
+      }
+      else{
+        cancelAndDelete(appendEntryTimers[i].timeoutEvent);
+        appendEntryTimers.erase(appendEntryTimers.begin() + i);
+        return;
+      }
       
       //Reset timer
       scheduleAt(simTime() + par("resendTimeout"), appendEntryTimers[i].timeoutEvent);
@@ -359,7 +366,16 @@ void Server::handleMessage(cMessage *msg)
         RPCsNewConfig[getIndex(newConfiguration, installSnapshotTimers[i].destination)].isHeartbeat = false;
         installSnapshotRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, installSnapshotTimers[i].destination)].sequenceNumber);
       }
-      send(installSnapshotRPC, "port$o");
+
+      if(getIndex(configuration, installSnapshotTimers[i].destination) != -1 || (configuration != newConfiguration && getIndex(newConfiguration, installSnapshotTimers[i].destination) != -1)){
+        send(installSnapshotRPC, "port$o");
+      }
+      else{
+        cancelAndDelete(installSnapshotTimers[i].timeoutEvent);
+        installSnapshotTimers.erase(installSnapshotTimers.begin() + i);
+        return;
+      }
+      
       
       //Reset timer
       scheduleAt(simTime() + par("resendTimeout"), installSnapshotTimers[i].timeoutEvent);
