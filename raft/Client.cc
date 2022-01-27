@@ -107,10 +107,12 @@ void Client::handleMessage(cMessage *msg){
   }
   // If timeout without receiving response, try to resend the mex, choosing another server
   else if (msg == requestTimeoutRead){
+    bubble("Retry READ");
     scheduleAt(simTime(), sendRead);
     return;
   }
   else if (msg == requestTimeoutWrite){
+    bubble("Retry WRITE");
     scheduleAt(simTime(), sendWrite);
     return;
   }

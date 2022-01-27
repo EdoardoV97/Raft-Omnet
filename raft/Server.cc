@@ -1349,36 +1349,42 @@ void Server::appendNewEntryTo(log_entry newEntry, int destAddress, int serverInd
     appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, destAddress)].sequenceNumber);
   }
 
+  int tempPrevLogIndex;
+  int tempPrevLogTerm;
   // If NOT membership change occurring OR if it is occurring but the destination is in configuration
   if((configuration == newConfiguration) || (configuration != newConfiguration && getIndex(configuration, destAddress) != -1)){
     index = getEntryIndexPositionInLog(nextIndex[serverIndex]);
     // If index == 0 means that we must take from the snapshot the prevLogIndex and prevLogTerm, because the previous entry is not more in the log
     if(index == 0){
-      appendEntriesRPC->setPrevLogIndex(snapshot.lastIncludedIndex);
-      appendEntriesRPC->setPrevLogTerm(snapshot.lastIncludedTerm); 
+      tempPrevLogIndex = snapshot.lastIncludedIndex;
+      tempPrevLogTerm = snapshot.lastIncludedTerm;
     }
     else{
-      appendEntriesRPC->setPrevLogIndex(log[index-1].logIndex); // -1 because the previous
-      appendEntriesRPC->setPrevLogTerm(log[index-1].term);
+      tempPrevLogIndex = log[index-1].logIndex; // -1 because the previous
+      tempPrevLogTerm = log[index-1].term;
     }
+    
   }
   else{ // A membership change is occurring and the destination is ONLY in newConfiguration (by exclusion from the IF case above)
     index = getEntryIndexPositionInLog(nextIndexNewConfig[serverIndex]);
     if(index == 0){
-      appendEntriesRPC->setPrevLogIndex(snapshot.lastIncludedIndex);
-      appendEntriesRPC->setPrevLogTerm(snapshot.lastIncludedTerm); 
+      tempPrevLogIndex = snapshot.lastIncludedIndex;
+      tempPrevLogTerm = snapshot.lastIncludedTerm; 
     }
     else{
-      appendEntriesRPC->setPrevLogIndex(log[index-1].logIndex); // -1 because the previous
-      appendEntriesRPC->setPrevLogTerm(log[index-1].term);
+      tempPrevLogIndex = log[index-1].logIndex; // -1 because the previous
+      tempPrevLogTerm = log[index-1].term;
     }
   }
+
+  appendEntriesRPC->setPrevLogIndex(tempPrevLogIndex);
+  appendEntriesRPC->setPrevLogTerm(tempPrevLogTerm);
 
   // Create the associated timer to eventually resend the message if no response come back.
   append_entry_timer newTimer;
   newTimer.destination = destAddress;
-  newTimer.prevLogIndex = newEntry.logIndex - 1;
-  newTimer.prevLogTerm = log[newEntry.logIndex - 1].term;
+  newTimer.prevLogIndex = tempPrevLogIndex;
+  newTimer.prevLogTerm = tempPrevLogTerm;
   newTimer.timeoutEvent = new cMessage("append-entry-timeout-event");
   newTimer.entry = newEntry;
   newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
@@ -1835,8 +1841,14 @@ void Server::sendRequestVote(){
   requestVoteRPC = new RPCRequestVotePacket("RPC_REQUEST_VOTE", RPC_REQUEST_VOTE);
   requestVoteRPC->setTerm(currentTerm);
   requestVoteRPC->setCandidateId(myAddress);
-  requestVoteRPC->setLastLogIndex(log.back().logIndex);
-  requestVoteRPC->setLastLogTerm(log.back().term);
+  if (log.empty()){
+    requestVoteRPC->setLastLogIndex(snapshot.lastIncludedIndex);
+    requestVoteRPC->setLastLogTerm(snapshot.lastIncludedTerm);
+  }
+  else{
+    requestVoteRPC->setLastLogIndex(log.back().logIndex);
+    requestVoteRPC->setLastLogTerm(log.back().term);
+  }
   requestVoteRPC->setSrcAddress(myAddress);
 
   for (int i = 0; i < configuration.size(); i++){
