@@ -699,7 +699,7 @@ void Server::handleMessage(cMessage *msg)
           if(snapshot.value != -1 && index <= snapshot.lastIncludedIndex) {sendSnapshot(receiverAddress);}
           else{
             // Case of membership change and the address come from an only NEW server which now is up to date
-            if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1){
+            if(!newServersCanVote && configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1){
               if(checkNewServersAreUpToDate()){ // Now trigger the Cold,new append
                 bubble("Creating C_old,new");
                 log_entry newEntry;
@@ -1024,6 +1024,7 @@ void Server::handleMessage(cMessage *msg)
     configuration.assign(pk->getSnapshot().cOld.begin(), pk->getSnapshot().cOld.end());
     newConfiguration.assign(pk->getSnapshot().cNew.begin(), pk->getSnapshot().cNew.end());
     latestClientResponses.assign(pk->getSnapshot().clientsData.begin(), pk->getSnapshot().clientsData.end());
+    sendSnapshotResponse(receiverAddress, seqNum);
   }
   break;
   case RPC_INSTALL_SNAPSHOT_RESPONSE:
@@ -1041,11 +1042,12 @@ void Server::handleMessage(cMessage *msg)
         }
       }
 
-      /* // Check if in the meantime we have accumulated some new entries to send
+      // Check if there are other entries to send after the snapshot
       int position;
       int index;
 
-      if(getIndex(configuration, receiverAddress) != -1){
+      if (getIndex(configuration, receiverAddress) != -1)
+      {
         position = getIndex(configuration, receiverAddress);
         // Update matchIndex and nextIndex
         matchIndex[position] = nextIndex[position];
@@ -1053,21 +1055,29 @@ void Server::handleMessage(cMessage *msg)
       }
 
       // Configuration change and follower also in new config
-      if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1){
-        position = getIndex(newConfiguration, receiverAddress);  
+      if (configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1)
+      {
+        position = getIndex(newConfiguration, receiverAddress);
         // Update matchIndex and nextIndex
         matchIndexNewConfig[position] = nextIndexNewConfig[position];
         index = ++nextIndexNewConfig[position];
       }
 
       // If nextIndex is not in any log entry ==> LEADER may have delete the entry cause of snapshotting
-      if(getEntryIndexPositionInLog(index) == -1){
+      if (getEntryIndexPositionInLog(index) == -1)
+      {
         // If nextIndex is in snapshot, send snapshot. Else means that FOLLOWER is up to date
-        if(index <= snapshot.lastIncludedIndex) {sendSnapshot(receiverAddress);}
-        else{
+        if (snapshot.value != -1 && index <= snapshot.lastIncludedIndex)
+        {
+          sendSnapshot(receiverAddress);
+        }
+        else
+        {
           // Case of membership change and the address come from an only NEW server which now is up to date
-          if(configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1){
-            if(checkNewServersAreUpToDate()){ // Now trigger the Cold,new append
+          if (!newServersCanVote && configuration != newConfiguration && getIndex(newConfiguration, receiverAddress) != -1 && getIndex(configuration, receiverAddress) == -1)
+          {
+            if (checkNewServersAreUpToDate())
+            { // Now trigger the Cold,new append
               bubble("Creating C_old,new");
               log_entry newEntry;
               newEntry.term = currentTerm;
@@ -1079,28 +1089,31 @@ void Server::handleMessage(cMessage *msg)
               newEntry.clientsData.assign(latestClientResponses.begin(), latestClientResponses.end());
               log.push_back(newEntry);
               matchIndex[getIndex(configuration, myAddress)]++;
-              if (getIndex(newConfiguration, myAddress) != -1){
+              if (getIndex(newConfiguration, myAddress) != -1)
+              {
                 matchIndexNewConfig[getIndex(newConfiguration, myAddress)]++;
               }
               newServersCanVote = true;
               cancelEvent(sendHearthbeat);
               appendNewEntry(newEntry, false);
-              scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat); 
+              scheduleAt(simTime() + par("hearthBeatTime"), sendHearthbeat);
             }
           }
         }
       }
-      else{
+      else
+      {
         index = getEntryIndexPositionInLog(index);
         log_entry newEntry;
         newEntry = log[index];
         newEntry.clientsData.assign(log[index].clientsData.begin(), log[index].clientsData.end());
-        if(newEntry.var == 'C'){  
+        if (newEntry.var == 'C')
+        {
           newEntry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end());
           newEntry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
         }
         appendNewEntryTo(newEntry, receiverAddress, position);
-      } */
+      }
     }
   }
   default:
@@ -1899,7 +1912,7 @@ int Server::getEntryIndexPositionInLog(int entryIndex){
 }
 
 void Server::sendSnapshot(int destAddress){
-  EV << "I am sending a snapshot\n"; 
+  bubble("I am sending a snapshot"); 
   snapshot_file temp = snapshot;
   temp.cOld.assign(snapshot.cOld.begin(), snapshot.cOld.end());
   temp.cNew.assign(snapshot.cNew.begin(), snapshot.cNew.end());
@@ -1941,6 +1954,7 @@ void Server::sendSnapshot(int destAddress){
   installSnapshotTimers.push_back(newTimer);
   scheduleAt(simTime() + par("resendTimeout"), newTimer.timeoutEvent);
 
+  send(installSnapshotRPC, "port$o");
 }
 
 void Server::sendSnapshotResponse(int destAddress, int seqNum){
@@ -1949,6 +1963,8 @@ void Server::sendSnapshotResponse(int destAddress, int seqNum){
   installSnapshotResponseRPC->setDestAddress(destAddress);
   installSnapshotResponseRPC->setTerm(currentTerm);
   installSnapshotResponseRPC->setSequenceNumber(seqNum);
+
+  send(installSnapshotResponseRPC, "port$o");
 }
 
 void Server::applySnapshot(){
