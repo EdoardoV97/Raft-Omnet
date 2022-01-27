@@ -39,6 +39,7 @@ class Client : public cSimpleModule
       void chooseNextRandomOp();
       int chooseRandomServer();
       void initializeConfiguration();
+      bool isInConfig(int destAddress);
   };
 
 Define_Module(Client);
@@ -126,8 +127,9 @@ void Client::handleMessage(cMessage *msg){
     RPCClientCommandResponsePacket *response = check_and_cast<RPCClientCommandResponsePacket *>(pk);
 
     if (response->getRedirect() == true){
-      // If no known leader is available, retry after timeout
-      if (response->getLastKnownLeader() == -1) {
+
+      // If no known leader is available or is a leader of an old config, drop the packet and retry later
+      if (!isInConfig(response->getLastKnownLeader())) {
         delete pk;
         return;
       }
@@ -207,6 +209,15 @@ void Client::initializeConfiguration(){
       }
     }
   }
+}
+
+bool Client::isInConfig(int destAddress){
+  for (int i=0; i<configuration.size(); i++){
+    if (configuration[i] == destAddress){
+      return true;
+    }
+  }
+  return false;
 }
 
 void Client::refreshDisplay() const

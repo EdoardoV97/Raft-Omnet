@@ -59,9 +59,19 @@ void Switch::activity()
         // Send to specific address
         else{
             destAddress = pk->getDestAddress();
+
             const char* destName = gate(destAddress)->getNextGate()->getOwnerModule()->getFullName();
             EV << "Relaying msg received to " << destName << "  (addr = " << destAddress << ")\n";
             send(msg, destAddress);
+            /* if (gate(destAddress)->isConnected())
+            {
+                const char* destName = gate(destAddress)->getNextGate()->getOwnerModule()->getFullName();
+                EV << "Relaying msg received to " << destName << "  (addr = " << destAddress << ")\n";
+                send(msg, destAddress);
+            }
+            else{
+                delete pk;
+            } */
         }
     }
 }
