@@ -126,6 +126,11 @@ void Client::handleMessage(cMessage *msg){
     RPCClientCommandResponsePacket *response = check_and_cast<RPCClientCommandResponsePacket *>(pk);
 
     if (response->getRedirect() == true){
+      // If no known leader is available, retry after timeout
+      if (response->getLastKnownLeader() == -1) {
+        delete pk;
+        return;
+      }
       // If I have been redirect set the receiverAddress to LastKnownLeader, so to avoid pick a random server again
       isRedirect = true;
       receiverAddress = response->getLastKnownLeader();
