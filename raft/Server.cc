@@ -1712,8 +1712,8 @@ void Server::initializeConfiguration(){
   int moduleAddress;
   for (int i = 1; i < Switch->gateSize("port$o"); i++){
     std::string serverString = "server";
-    std::string moduleCheck = Switch->gate("port$o", i)->getNextGate()->getOwnerModule()->getFullName();
     if (Switch->gate("port$o", i)->isConnected()){
+      std::string moduleCheck = Switch->gate("port$o", i)->getNextGate()->getOwnerModule()->getFullName();
       if (moduleCheck.find(serverString) != std::string::npos){
         moduleAddress = Switch->gate("port$o", i)->getId();
         //EV << "Added ID: " << moduleAddress << " to configuration Vector" << endl;
