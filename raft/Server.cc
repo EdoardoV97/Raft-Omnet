@@ -318,6 +318,7 @@ void Server::handleMessage(cMessage *msg)
         RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].isHeartbeat = false;
         appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber);
       }
+      // Send the message only if the destination is still in a configuration
       if(getIndex(configuration, appendEntryTimers[i].destination) != -1 || (configuration != newConfiguration && getIndex(newConfiguration, appendEntryTimers[i].destination) != -1)){
         send(appendEntriesRPC, "port$o");
       }
@@ -366,7 +367,7 @@ void Server::handleMessage(cMessage *msg)
         RPCsNewConfig[getIndex(newConfiguration, installSnapshotTimers[i].destination)].isHeartbeat = false;
         installSnapshotRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, installSnapshotTimers[i].destination)].sequenceNumber);
       }
-
+      // Send the message only if the destination is still in a configuration
       if(getIndex(configuration, installSnapshotTimers[i].destination) != -1 || (configuration != newConfiguration && getIndex(newConfiguration, installSnapshotTimers[i].destination) != -1)){
         send(installSnapshotRPC, "port$o");
       }
