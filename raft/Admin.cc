@@ -104,6 +104,7 @@ void Admin::handleMessage(cMessage *msg)
         deleteServer();
         bubble("Shutting down old servers");
         toPurge.clear();
+        scheduleAt(simTime() + par("changeConfigTime"), changeConfig);
       }
     }
     delete pk;
