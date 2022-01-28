@@ -1228,7 +1228,16 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
         newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
         newTimer.entry.clientsData.assign(newEntry.clientsData.begin(), newEntry.clientsData.end());
         
-        if(RPCs[i].success == true){
+        // To check if there is not already an append entry "programmed"
+        bool timerAlreadyPresent = false;
+        for(int k=0; k < appendEntryTimers.size() ; k++){
+          if (configuration[i] == appendEntryTimers[k].destination){
+            timerAlreadyPresent = true;
+            break;
+          }
+        }
+
+        if(RPCs[i].success == true && !timerAlreadyPresent){
           appendEntriesRPC->setDestAddress(configuration[i]);
 
           // Increment sequence number
@@ -1255,17 +1264,7 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
         }
         else{
           // If is going on an heartbeat RPC, set a timer that will trigger an append entry in the future when the heartbeat RPC will be possible terminated
-          if (RPCs[i].isHeartbeat){
-            // To check if there is not already an append entry "programmed"
-            bool timerAlreadyPresent = false;
-            
-            for(int k=0; k < appendEntryTimers.size() ; k++){
-              if (configuration[i] == appendEntryTimers[k].destination){
-                timerAlreadyPresent = true;
-                break;
-              }
-            }
-            
+          if (RPCs[i].isHeartbeat){         
             if(!timerAlreadyPresent){
               appendEntryTimers.push_back(newTimer);
               // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
@@ -1302,7 +1301,17 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
         newTimer.entry.cOld.assign(newEntry.cOld.begin(), newEntry.cOld.end()); // To perform deep copy
         newTimer.entry.cNew.assign(newEntry.cNew.begin(), newEntry.cNew.end());
         newTimer.entry.clientsData.assign(newEntry.clientsData.begin(), newEntry.clientsData.end());
-        if(RPCsNewConfig[i].success == true){
+
+        // To check if there is not already an append entry "programmed"
+        bool timerAlreadyPresent = false;        
+        for(int k=0; k < appendEntryTimers.size() ; k++){
+          if (newConfiguration[i] == appendEntryTimers[k].destination){
+            timerAlreadyPresent = true;
+            break;
+          }
+        }
+
+        if(RPCsNewConfig[i].success == true && !timerAlreadyPresent){
           appendEntriesRPC->setDestAddress(newConfiguration[i]);
 
           // Increment sequence number
@@ -1327,16 +1336,6 @@ void Server::appendNewEntry(log_entry newEntry, bool onlyToNewServers){
         }else{
           // If is going on an heartbeat RPC, set a timer that will trigger an append entry in the future when the heartbeat RPC will be possible terminated
           if (RPCsNewConfig[i].isHeartbeat){
-            // To check if there is not already an append entry "programmed"
-            bool timerAlreadyPresent = false;
-            
-            for(int k=0; k < appendEntryTimers.size() ; k++){
-              if (newConfiguration[i] == appendEntryTimers[k].destination){
-                timerAlreadyPresent = true;
-                break;
-              }
-            }
-            
             if(!timerAlreadyPresent){
               appendEntryTimers.push_back(newTimer);
               // Reset the timer to wait before retry sending (indefinitely) the append entries for a particular follower
@@ -2059,14 +2058,13 @@ void Server::refreshDisplay() const
     }
     if (status == FOLLOWER){
       getDisplayString().setTagArg("t", 2, "grey");
+      getDisplayString().setTagArg("i", 1, "");
     }
     if (status == CANDIDATE){
       getDisplayString().setTagArg("t", 2, "red");
     }
     if (iAmCrashed == true){
       getDisplayString().setTagArg("i", 1, "black");
-    }else{
-      getDisplayString().setTagArg("i", 1, "");
     }
     
 }
