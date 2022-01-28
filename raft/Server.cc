@@ -260,7 +260,7 @@ void Server::handleMessage(cMessage *msg)
     
     // If a snapshot is available
     if (snapshot.value != -1){applySnapshot();}
-    replayLog();
+    //replayLog();
     return;
   }
   
@@ -2064,14 +2064,16 @@ void Server::refreshDisplay() const
       getDisplayString().setTagArg("t", 2, "red");
     }
     if (iAmCrashed == true){
-      getDisplayString().setTagArg("t", 2, "pink");
+      getDisplayString().setTagArg("i", 1, "black");
+    }else{
+      getDisplayString().setTagArg("i", 1, "");
     }
     
 }
 
 std::ostream& operator<<(std::ostream& os, const vector<log_entry> log){
   for (int i = 0; i < log.size(); i++){
-    os << "{index=" << log[i].logIndex << ",term=" << log[i].term << "} "; // no endl!
+    os << "{i=" << log[i].logIndex << ",t=" << log[i].term << ",v=" << log[i].value << "} "; // no endl!
   }
   return os;
 }
