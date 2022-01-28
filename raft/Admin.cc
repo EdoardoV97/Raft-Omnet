@@ -34,6 +34,7 @@ void Admin::initialize()
     WATCH(myAddress);
     WATCH_VECTOR(configuration);
     WATCH_VECTOR(toPurge);
+    WATCH(numberOfNewServers);
     updateConfiguration();
     scheduleAt(simTime() + par("changeConfigTime"), changeConfig);
 }
@@ -56,7 +57,7 @@ void Admin::handleMessage(cMessage *msg)
           newSwitchPortIN = Switch->gate("port$i", index);
           newSwitchPortOUT = Switch->gate("port$o", index);
           bubble("Adding new server!");
-          createNewServer(index-2);
+          createNewServer(index-4);
           numberOfNewServers--;
 
           // Repeat the add server procedure
