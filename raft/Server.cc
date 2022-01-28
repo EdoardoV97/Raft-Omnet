@@ -423,7 +423,6 @@ void Server::handleMessage(cMessage *msg)
           if(log[index].term != pk->getPrevLogTerm()){
             partialEval = true;
           }
-          
         }
         else{
           // If snapshot exists
@@ -524,7 +523,7 @@ void Server::handleMessage(cMessage *msg)
     else{  // Heartbeat case
       //If i am candidate
       if(status == CANDIDATE){
-          if(pk->getTerm() == currentTerm){ //the > case is already tested with updateTerm() before the switch
+          if(pk->getTerm() == currentTerm){ //the > case is already tested with updateTerm() before the switch  
             becomeFollower(pk);
           }
           sendAck(pk->getSrcAddress(), pk->getSequenceNumber());
@@ -1544,12 +1543,6 @@ void Server::updateTerm(RPCPacket *pkGeneric){
         becomeFollower(pk);
       }
     }
-    else{
-      if(pk->getTerm() == currentTerm && status == CANDIDATE){
-        becomeFollower(pk);
-      }
-      
-    }
   }
     break;
   case RPC_REQUEST_VOTE:
@@ -1642,7 +1635,6 @@ void Server::becomeLeader(){
   votes = 0;
   newServersCanVote = true;
   votesNewConfig = 0;
-  //votedFor = -1;
   nextIndex.clear();
   matchIndex.clear();
   nextIndex.resize(configuration.size(), log.back().logIndex + 1);
@@ -1703,7 +1695,6 @@ void Server::becomeFollower(RPCPacket *pkGeneric){
   }
   votes = 0;
   votesNewConfig = 0;
-  votedFor = -1;
   acks = 0;
   nextIndex.clear();
   matchIndex.clear();
