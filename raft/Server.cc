@@ -202,21 +202,25 @@ void Server::initialize()
 void Server::handleMessage(cMessage *msg)
 {
   if (msg == crashTimeoutEvent){
+    bubble("I am crashed");
     cancelEvent(sendHearthbeat);
     cancelEvent(electionTimeoutEvent);
     cancelEvent(minElectionTimeoutEvent);
     for (int i = 0; i < appendEntryTimers.size() ; i++){
-      cancelEvent(appendEntryTimers[i].timeoutEvent);
+      cancelAndDelete(appendEntryTimers[i].timeoutEvent);
     }
     for (int i = 0; i < installSnapshotTimers.size() ; i++){
       cancelAndDelete(installSnapshotTimers[i].timeoutEvent);
     }
+    appendEntryTimers.clear();
+    installSnapshotTimers.clear();
     iAmCrashed = true;
     scheduleAt(simTime() + par("reviveTimeout"), reviveTimeoutEvent);
     return;
   }
 
   if(msg == reviveTimeoutEvent){
+    bubble("I am resurrecting");
     // Reset all raft's original volatile variables 
     x = 0;
     configuration.clear();
@@ -229,7 +233,7 @@ void Server::handleMessage(cMessage *msg)
     nextIndexNewConfig.clear();
     matchIndexNewConfig.clear();
     // Reset all other utility volatile variables 
-    votes = 0; 
+    votes = 0;
     votesNewConfig = 0; 
     leaderAddress = -1;
     acks = 0; 
@@ -250,7 +254,7 @@ void Server::handleMessage(cMessage *msg)
     // in fact, we can suppose that a NON_VOTING server will be recovered after a crash and turned in the same NON_VOTING state for coherence by an "admin"
     if(status != NON_VOTING){
       status = FOLLOWER;
-      scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
+      //scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
       scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent); 
     }
     
@@ -425,6 +429,9 @@ void Server::handleMessage(cMessage *msg)
           // If snapshot exists
           if(snapshot.value != -1){
             if (pk->getPrevLogIndex() != snapshot.lastIncludedIndex){
+              partialEval = true;
+            }
+            else{
               if (pk->getPrevLogTerm() != snapshot.lastIncludedTerm){
                 partialEval = true;
               }
@@ -438,6 +445,9 @@ void Server::handleMessage(cMessage *msg)
       // Log is empty, so we are sure snapshot exists
       else{
         if (pk->getPrevLogIndex() != snapshot.lastIncludedIndex){
+          partialEval = true;
+        }
+        else{
           if (pk->getPrevLogTerm() != snapshot.lastIncludedTerm){
             partialEval = true;
           }
@@ -1529,6 +1539,7 @@ void Server::updateTerm(RPCPacket *pkGeneric){
     RPCAppendEntriesPacket *pk = check_and_cast<RPCAppendEntriesPacket *>(pkGeneric);
     if(pk->getTerm() > currentTerm){
       currentTerm = pk->getTerm();
+      votedFor = -1;
       if(status == CANDIDATE || status == LEADER){
         becomeFollower(pk);
       }
@@ -1546,6 +1557,7 @@ void Server::updateTerm(RPCPacket *pkGeneric){
     RPCRequestVotePacket *pk = check_and_cast<RPCRequestVotePacket *>(pkGeneric);
     if(pk->getTerm() > currentTerm && !believeCurrentLeaderExists){
       currentTerm = pk->getTerm();
+      votedFor = -1;
       if(status == CANDIDATE || status == LEADER){
         becomeFollower(pk);
       }
@@ -1557,6 +1569,7 @@ void Server::updateTerm(RPCPacket *pkGeneric){
     RPCAppendEntriesResponsePacket *pk = check_and_cast<RPCAppendEntriesResponsePacket *>(pkGeneric);
     if(pk->getTerm() > currentTerm){
       currentTerm = pk->getTerm();
+      votedFor = -1;
       if(status == CANDIDATE || status == LEADER){
         becomeFollower(pk);
       }
@@ -1568,6 +1581,7 @@ void Server::updateTerm(RPCPacket *pkGeneric){
     RPCRequestVoteResponsePacket *pk = check_and_cast<RPCRequestVoteResponsePacket *>(pkGeneric);
     if(pk->getTerm() > currentTerm){
       currentTerm = pk->getTerm();
+      votedFor = -1;
       if(status == CANDIDATE || status == LEADER){
         becomeFollower(pk);
       }
@@ -1579,6 +1593,7 @@ void Server::updateTerm(RPCPacket *pkGeneric){
     RPCInstallSnapshotPacket *pk = check_and_cast<RPCInstallSnapshotPacket *>(pkGeneric);
     if(pk->getTerm() > currentTerm){
       currentTerm = pk->getTerm();
+      votedFor = -1;
       if(status == CANDIDATE || status == LEADER){
         becomeFollower(pk);
       }
@@ -1590,6 +1605,7 @@ void Server::updateTerm(RPCPacket *pkGeneric){
     RPCInstallSnapshotResponsePacket *pk = check_and_cast<RPCInstallSnapshotResponsePacket *>(pkGeneric);
     if(pk->getTerm() > currentTerm){
       currentTerm = pk->getTerm();
+      votedFor = -1;
       if(status == CANDIDATE || status == LEADER){
         becomeFollower(pk);
       }
@@ -1626,7 +1642,7 @@ void Server::becomeLeader(){
   votes = 0;
   newServersCanVote = true;
   votesNewConfig = 0;
-  votedFor = -1;
+  //votedFor = -1;
   nextIndex.clear();
   matchIndex.clear();
   nextIndex.resize(configuration.size(), log.back().logIndex + 1);
@@ -2055,6 +2071,9 @@ void Server::refreshDisplay() const
     }
     if (status == CANDIDATE){
       getDisplayString().setTagArg("t", 2, "red");
+    }
+    if (iAmCrashed == true){
+      getDisplayString().setTagArg("t", 2, "pink");
     }
     
 }
