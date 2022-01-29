@@ -169,6 +169,7 @@ void Server::initialize()
   WATCH(appendEntryTimers);
   WATCH(snapshot);
   WATCH(installSnapshotTimers);
+  WATCH(latestClientResponses);
 
   // Initialize the initial configuration
   initializeConfiguration();
@@ -543,7 +544,7 @@ void Server::handleMessage(cMessage *msg)
             }
             sendAck(pk->getSrcAddress(), pk->getSequenceNumber());
             
-            latestClientResponses.assign(pk->getEntry().clientsData.begin(), pk->getEntry().clientsData.end());
+            //latestClientResponses.assign(pk->getEntry().clientsData.begin(), pk->getEntry().clientsData.end());
             scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
             scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
           }
@@ -900,7 +901,7 @@ void Server::handleMessage(cMessage *msg)
       if(getClientIndex(pk->getSrcAddress()) == -1){
         latest_client_response temp;
         temp.clientAddress = pk->getSrcAddress();
-        temp.latestSequenceNumber = pk->getSequenceNumber()-1; //Thus when replying simply do ++
+        temp.latestSequenceNumber = pk->getSequenceNumber()-1;
         temp.currentSequenceNumber = pk->getSequenceNumber();
         latestClientResponses.push_back(temp);
       }
@@ -1783,7 +1784,7 @@ void Server::sendResponseToClient(int type, int clientAddress){
   clientCommandResponseRPC->setSrcAddress(myAddress);
   clientCommandResponseRPC->setDestAddress(clientAddress);
   send(clientCommandResponseRPC, "port$o");
-  latestClientResponses[getClientIndex(clientAddress)].latestSequenceNumber++;
+  latestClientResponses[getClientIndex(clientAddress)].latestSequenceNumber = latestClientResponses[getClientIndex(clientAddress)].currentSequenceNumber;
 }
 
 void Server::startReadOnlyLeaderCheck(){
@@ -2121,5 +2122,12 @@ std::ostream& operator<<(std::ostream& os, const vector<install_snapshot_timer> 
 
 std::ostream& operator<<(std::ostream& os, const snapshot_file snap){
   os << "{lastIndex=" << snap.lastIncludedIndex << ",lastTerm=" << snap.lastIncludedTerm << ",value=" << snap.value << "} "; // no endl!
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const vector<latest_client_response> latestClientResponses){
+  for (int i = 0; i < latestClientResponses.size(); i++){
+    os << "{Client=" << latestClientResponses[i].clientAddress << ",LSN=" << latestClientResponses[i].latestSequenceNumber << ",CSN=" << latestClientResponses[i].currentSequenceNumber << ",LResponse=" << latestClientResponses[i].latestReponseToClient << "} "; // no endl!
+  }
   return os;
 }
