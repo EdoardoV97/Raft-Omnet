@@ -502,7 +502,10 @@ void Server::handleMessage(cMessage *msg)
             configuration.assign(pk->getEntry().cOld.begin(), pk->getEntry().cOld.end()); // It is necessary only for servers of the new configuration to learn the old configuration
             newConfiguration.assign(pk->getEntry().cNew.begin(), pk->getEntry().cNew.end());
             
-            if (status == NON_VOTING){becomeFollower(pkGeneric);} 
+            if (status == NON_VOTING){
+              becomeFollower(pkGeneric);
+              getDisplayString().setTagArg("i", 1, "");
+            } 
           }
           // If it is the entry of the second phase (Cnew)
           else{
@@ -2081,7 +2084,7 @@ void Server::refreshDisplay() const
     }
     if (status == FOLLOWER){
       getDisplayString().setTagArg("t", 2, "grey");
-      getDisplayString().setTagArg("i", 1, "");
+      //getDisplayString().setTagArg("i", 1, "");
     }
     if (status == CANDIDATE){
       getDisplayString().setTagArg("t", 2, "red");
