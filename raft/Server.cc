@@ -255,7 +255,8 @@ void Server::handleMessage(cMessage *msg)
     if(status != NON_VOTING){
       status = FOLLOWER;
       //scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
-      scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent); 
+      scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
+      scheduleAt(simTime() +  uniform(SimTime(par("lowCrashTimeout")), SimTime(par("highCrashTimeout"))), crashTimeoutEvent); 
     }
     
     // If a snapshot is available
