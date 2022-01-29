@@ -254,6 +254,7 @@ void Server::handleMessage(cMessage *msg)
     // "Status" is for the check even if it is supposed to be not saved after a crash, but only for simplicity of simulating
     // in fact, we can suppose that a NON_VOTING server will be recovered after a crash and turned in the same NON_VOTING state for coherence by an "admin"
     if(status != NON_VOTING){
+      getDisplayString().setTagArg("i", 1, "");
       status = FOLLOWER;
       //scheduleAt(simTime() + par("lowElectionTimeout"), minElectionTimeoutEvent);
       scheduleAt(simTime() +  uniform(SimTime(par("lowElectionTimeout")), SimTime(par("highElectionTimeout"))), electionTimeoutEvent);
@@ -262,7 +263,7 @@ void Server::handleMessage(cMessage *msg)
     
     // If a snapshot is available
     if (snapshot.value != -1){applySnapshot();}
-    //replayLog();
+    replayLog();
     return;
   }
   
@@ -320,7 +321,7 @@ void Server::handleMessage(cMessage *msg)
       }
       if(configuration != newConfiguration && getIndex(newConfiguration, appendEntryTimers[i].destination) != -1){
         RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber++;
-        RPCs[getIndex(newConfiguration, appendEntryTimers[i].destination)].success = false;
+        RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].success = false;
         RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].isHeartbeat = false;
         appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber);
       }
@@ -1523,7 +1524,7 @@ void Server::applyCommand(log_entry entry){
 void Server::replayLog(){
   for (int i = 0; i < log.size(); i++){
     log_entry entry = log[i];
-    applyCommand(entry);
+    //applyCommand(entry);
     if (entry.var == 'C'){
       if(!entry.cOld.empty()){ // Cold,new case
         configuration.assign(entry.cOld.begin(), entry.cOld.end());
