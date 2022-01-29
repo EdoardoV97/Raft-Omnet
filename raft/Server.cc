@@ -523,9 +523,6 @@ void Server::handleMessage(cMessage *msg)
     else{  // Heartbeat case
       //If i am candidate
       if(status == CANDIDATE){
-          if(pk->getTerm() == currentTerm){ //the > case is already tested with updateTerm() before the switch  
-            becomeFollower(pk);
-          }
           sendAck(pk->getSrcAddress(), pk->getSequenceNumber());
           // (Note: otherwise the electionTimeoutEvent remains valid)
         }
@@ -1558,6 +1555,11 @@ void Server::updateTerm(RPCPacket *pkGeneric){
       currentTerm = pk->getTerm();
       votedFor = -1;
       if(status == CANDIDATE || status == LEADER){
+        becomeFollower(pk);
+      }
+    }
+    else{
+      if (pk->getTerm() == currentTerm && status == CANDIDATE){
         becomeFollower(pk);
       }
     }

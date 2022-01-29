@@ -13,6 +13,7 @@ class Client : public cSimpleModule
       virtual ~Client();
     private:
       int myAddress;
+      int adminAddress;
       int receiverAddress; // This is the choosen server ID
 
       // Actual cluster configuration
@@ -55,6 +56,7 @@ Client::~Client()
 
 void Client::initialize(){
   myAddress = gate("port$i")->getPreviousGate()->getId();
+  adminAddress = gate("port$o")->getNextGate()->getOwnerModule()->gate("port$o", 0)->getId();
 
   WATCH_VECTOR(configuration);
   WATCH(myAddress);
@@ -75,7 +77,7 @@ void Client::handleMessage(cMessage *msg){
     if (isRedirect == false){
       receiverAddress = chooseRandomServer();
     }
-    bubble("Requesting READ");
+    //bubble("READ");
     cancelEvent(requestTimeoutRead);
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
@@ -91,7 +93,7 @@ void Client::handleMessage(cMessage *msg){
     if (isRedirect == false){
       receiverAddress = chooseRandomServer();
     }
-    bubble("Requesting WRITE");
+    //bubble("WRITE");
     cancelEvent(requestTimeoutWrite);
     clientCommandRPC = new RPCClientCommandPacket("RPC_CLIENT_COMMAND", RPC_CLIENT_COMMAND);
     clientCommandRPC->setDestAddress(receiverAddress);
@@ -108,18 +110,27 @@ void Client::handleMessage(cMessage *msg){
   // If timeout without receiving response, try to resend the mex, choosing another server
   else if (msg == requestTimeoutRead){
     bubble("Retry READ");
+    cancelEvent(sendRead);
     scheduleAt(simTime(), sendRead);
     return;
   }
   else if (msg == requestTimeoutWrite){
     bubble("Retry WRITE");
+    cancelEvent(sendWrite);
     scheduleAt(simTime(), sendWrite);
     return;
   }
 
 
-
   RPCPacket *pk = check_and_cast<RPCPacket *>(msg);
+
+  // Simulate packet dropping on the receiver
+  if(dblrand() >= par("clientErrorRateThreshold").doubleValue() && pk->getSrcAddress() != adminAddress){
+    delete(pk);
+    bubble("Channel Failure!");
+    return;
+  }
+
   if (pk->getKind() == RPC_CLIENT_COMMAND){
     // Update config in response to Admin mex
     RPCClientCommandPacket *response = check_and_cast<RPCClientCommandPacket *>(pk);
