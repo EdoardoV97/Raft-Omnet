@@ -320,7 +320,7 @@ void Server::handleMessage(cMessage *msg)
       }
       if(configuration != newConfiguration && getIndex(newConfiguration, appendEntryTimers[i].destination) != -1){
         RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber++;
-        RPCs[getIndex(configuration, appendEntryTimers[i].destination)].success = false;
+        RPCs[getIndex(newConfiguration, appendEntryTimers[i].destination)].success = false;
         RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].isHeartbeat = false;
         appendEntriesRPC->setSequenceNumber(RPCsNewConfig[getIndex(newConfiguration, appendEntryTimers[i].destination)].sequenceNumber);
       }
