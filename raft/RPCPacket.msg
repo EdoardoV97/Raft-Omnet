@@ -87,5 +87,3 @@ packet RPCInstallSnapshotResponsePacket extends RPCPacket
 {
     int term ;      // currentTerm, for leader to update itself
 }
-
-//packet RPCAckPacket extends RPCPacket{};
