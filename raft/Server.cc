@@ -1060,10 +1060,15 @@ void Server::handleMessage(cMessage *msg)
       int receiverAddress = pk->getSrcAddress();
       if(!checkValidRPCResponse(receiverAddress, pk->getSequenceNumber())){break;}
       
+      bool snapshotIsChanged = false; 
+
       for(int i=0; i < installSnapshotTimers.size() ; i++){
         if (receiverAddress == installSnapshotTimers[i].destination){
           cancelAndDelete(installSnapshotTimers[i].timeoutEvent);
           installSnapshotTimers.erase(installSnapshotTimers.begin() + i);
+          if(installSnapshotTimers[i].lastIncludedIndex != snapshot.lastIncludedIndex){
+            snapshotIsChanged = true;
+          }
           break;
         }
       }
@@ -1076,8 +1081,15 @@ void Server::handleMessage(cMessage *msg)
       {
         position = getIndex(configuration, receiverAddress);
         // Update matchIndex and nextIndex
-        matchIndex[position] = nextIndex[position];
-        index = ++nextIndex[position];
+        if(snapshotIsChanged){
+          matchIndex[position] = nextIndex[position];
+          index = ++nextIndex[position];
+        }
+        else{
+          matchIndex[position] = snapshot.lastIncludedIndex;
+          nextIndex[position] = snapshot.lastIncludedIndex + 1;
+          index = nextIndex[position];
+        }
       }
 
       // Configuration change and follower also in new config
@@ -1085,8 +1097,15 @@ void Server::handleMessage(cMessage *msg)
       {
         position = getIndex(newConfiguration, receiverAddress);
         // Update matchIndex and nextIndex
-        matchIndexNewConfig[position] = nextIndexNewConfig[position];
-        index = ++nextIndexNewConfig[position];
+        if(snapshotIsChanged){
+          matchIndexNewConfig[position] = nextIndexNewConfig[position];
+          index = ++nextIndexNewConfig[position];
+        }
+        else{
+          matchIndexNewConfig[position] = snapshot.lastIncludedIndex;
+          nextIndexNewConfig[position] = snapshot.lastIncludedIndex + 1;
+          index = nextIndexNewConfig[position];
+        }
       }
 
       // If nextIndex is not in any log entry ==> LEADER may have delete the entry cause of snapshotting
