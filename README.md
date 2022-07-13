@@ -6,6 +6,9 @@ An implementation to allow simulations of Raft in Omnet++ following the original
 - Leonardo Ruzza
 - Edoardo Venir
 
+## Design 
+Take a look at our [Wiki page](https://github.com/EdoardoV97/Raft-Omnet/wiki)
+
 ## Setup
 Go to the official [Omnet++ website](https://omnetpp.org/) and follow the instruction to setup your environment.
 
